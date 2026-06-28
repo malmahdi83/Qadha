@@ -1,19 +1,10 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Mic, Play, Square, RotateCcw, ArrowRight, Sparkles } from 'lucide-react';
+import { Mic, Play, Square, RotateCcw, ArrowRight, Sparkles, Loader2 } from 'lucide-react';
 import { useApp } from '@/lib/context';
 import { t } from '@/lib/i18n';
-
-// Extend window type for SpeechRecognition
-declare global {
-  interface Window {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    SpeechRecognition: any;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    webkitSpeechRecognition: any;
-  }
-}
+import { transcribeAudio } from '@/lib/ai';
 
 function fmt(s: number) {
   const m = Math.floor(s / 60), ss = s % 60;
@@ -47,21 +38,18 @@ export default function InterviewSessionPage() {
 
   const [qIndex, setQIndex] = useState(0);
   const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const [camOn, setCamOn] = useState(false);
   const [camError, setCamError] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [recorded, setRecorded] = useState([false, false, false, false, false]);
-  // Live transcript shown while recording; committed to context on stop
-  const [liveTranscript, setLiveTranscript] = useState('');
-  const [srSupported, setSrSupported] = useState(true);
+  const [transcriptError, setTranscriptError] = useState('');
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const srRef = useRef<any>(null);
-  // Accumulates final results from SpeechRecognition across restarts
-  const transcriptRef = useRef('');
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
 
   const enableCam = useCallback(async () => {
     try {
@@ -77,100 +65,88 @@ export default function InterviewSessionPage() {
     streamRef.current = null; setCamOn(false);
   }, []);
 
-  const stopSR = useCallback(() => {
-    if (srRef.current) { srRef.current.onend = null; srRef.current.stop(); srRef.current = null; }
-  }, []);
-
-  const startSR = useCallback((lang: string) => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { setSrSupported(false); return; }
-
-    const sr = new SR();
-    sr.lang = lang === 'ar' ? 'ar-SA' : 'en-US';
-    sr.continuous = true;
-    sr.interimResults = true;
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    sr.onresult = (e: any) => {
-      let interim = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const res = e.results[i];
-        if (res.isFinal) {
-          transcriptRef.current += res[0].transcript + ' ';
-        } else {
-          interim += res[0].transcript;
-        }
-      }
-      setLiveTranscript(transcriptRef.current + interim);
-    };
-
-    // Auto-restart while still recording (browser stops after silence)
-    sr.onend = () => {
-      if (srRef.current) {
-        try { srRef.current.start(); } catch { /* already stopped */ }
-      }
-    };
-
-    srRef.current = sr;
-    try { sr.start(); } catch { setSrSupported(false); }
-  }, []);
-
   useEffect(() => {
     return () => {
       stopCam();
-      stopSR();
       if (timerRef.current) clearInterval(timerRef.current);
+      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+        recorderRef.current.stop();
+      }
     };
-  }, [stopCam, stopSR]);
+  }, [stopCam]);
+
+  const startRecording = useCallback(async () => {
+    if (!streamRef.current) await enableCam();
+    const stream = streamRef.current;
+    if (!stream) return;
+
+    chunksRef.current = [];
+    setTranscriptError('');
+
+    const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+
+    recorder.onstop = async () => {
+      const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+      setTranscribing(true);
+      try {
+        const transcript = await transcribeAudio(blob, intLang);
+        setAnswer(qIndex, transcript.trim());
+        setRecorded(r => { const n = [...r]; n[qIndex] = true; return n; });
+      } catch (err) {
+        console.error('Transcription error:', err);
+        setTranscriptError(
+          lang === 'ar'
+            ? 'تعذّر تحويل الصوت إلى نص. حاول مجددًا.'
+            : 'Could not transcribe audio. Please try again.'
+        );
+      } finally {
+        setTranscribing(false);
+      }
+    };
+
+    recorderRef.current = recorder;
+    recorder.start();
+    setRecording(true);
+    setElapsed(0);
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
+  }, [enableCam, intLang, lang, qIndex, setAnswer]);
+
+  const stopRecording = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      recorderRef.current.stop();
+    }
+    setRecording(false);
+  }, []);
 
   const toggleRecord = () => {
     if (recording) {
-      // Stop
-      if (timerRef.current) clearInterval(timerRef.current);
-      stopSR();
-      // Save final transcript for this question
-      const final = transcriptRef.current.trim();
-      setAnswer(qIndex, final || liveTranscript.trim());
-      setRecording(false);
-      setRecorded(r => { const n = [...r]; n[qIndex] = true; return n; });
+      stopRecording();
     } else {
-      // Start
-      if (!camOn) enableCam();
-      // Reset transcript for fresh recording
-      transcriptRef.current = '';
-      setLiveTranscript('');
-      setRecording(true); setElapsed(0);
-      if (timerRef.current) clearInterval(timerRef.current);
-      timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
-      startSR(intLang);
+      startRecording();
     }
   };
 
   const reRecord = () => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    stopSR();
-    transcriptRef.current = '';
-    setLiveTranscript('');
+    if (recording) stopRecording();
     setAnswer(qIndex, '');
-    setRecording(false);
     setRecorded(r => { const n = [...r]; n[qIndex] = false; return n; });
     setElapsed(0);
+    setTranscriptError('');
+    chunksRef.current = [];
   };
 
   const next = () => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    stopSR();
+    if (recording) stopRecording();
     if (qIndex >= 4) { stopCam(); router.push('/interview/results'); return; }
-    // Reset live transcript state for next question (answer already in context)
-    transcriptRef.current = '';
-    setLiveTranscript('');
-    setQIndex(i => i + 1); setRecording(false); setElapsed(0);
+    setQIndex(i => i + 1); setRecording(false); setElapsed(0); setTranscriptError('');
   };
 
   const isRecorded = recorded[qIndex];
-  const canProceed = isRecorded;
+  const canProceed = isRecorded && !transcribing;
   const savedTranscript = answers[qIndex] ?? '';
-  const displayTranscript = recording ? liveTranscript : savedTranscript;
 
   return (
     <section style={{ maxWidth: 1160, margin: '0 auto', padding: 'clamp(20px,3.5vw,40px) clamp(16px,4vw,40px)' }}>
@@ -187,7 +163,7 @@ export default function InterviewSessionPage() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 24 }}>
-        {/* Left: question + live transcript */}
+        {/* Left: question + transcript */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, padding: 28, boxShadow: 'var(--shadow)' }}>
             <p style={{ margin: 0, fontSize: 'clamp(18px,2.2vw,24px)', fontWeight: 700, lineHeight: 1.45 }}>
@@ -201,29 +177,28 @@ export default function InterviewSessionPage() {
           </div>
 
           {/* Transcript panel */}
-          {srSupported ? (
-            <div style={{ background: 'var(--surface)', border: `1.5px solid ${recording ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 16, padding: '14px 16px', minHeight: 100, transition: 'border-color .2s', position: 'relative' }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: recording ? 'var(--accent)' : 'var(--fg3)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, textTransform: 'uppercase', letterSpacing: '.06em' }}>
-                {recording && <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)', animation: 'qpulse 1s infinite', display: 'inline-block' }} />}
-                {lang === 'ar' ? 'النص المُحوَّل' : 'Transcript'}
-              </div>
-              {displayTranscript ? (
-                <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.65, color: 'var(--fg)' }}>{displayTranscript}</p>
-              ) : (
-                <p style={{ margin: 0, fontSize: 14, color: 'var(--fg3)', fontStyle: 'italic' }}>
-                  {recording
-                    ? (lang === 'ar' ? 'جارٍ الاستماع…' : 'Listening…')
-                    : (lang === 'ar' ? 'سيظهر النص هنا أثناء التسجيل' : 'Transcript will appear here while you record')}
-                </p>
-              )}
-            </div>
-          ) : (
-            <div style={{ background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.25)', borderRadius: 14, padding: '12px 16px', fontSize: 13.5, color: '#d97706' }}>
+          <div style={{ background: 'var(--surface)', border: `1.5px solid ${recording ? 'var(--accent)' : transcribing ? '#f59e0b' : 'var(--border)'}`, borderRadius: 16, padding: '14px 16px', minHeight: 100, transition: 'border-color .2s', position: 'relative' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: recording ? 'var(--accent)' : transcribing ? '#f59e0b' : 'var(--fg3)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, textTransform: 'uppercase', letterSpacing: '.06em' }}>
+              {recording && <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)', animation: 'qpulse 1s infinite', display: 'inline-block' }} />}
+              {transcribing && <Loader2 size={13} style={{ animation: 'qspin 1s linear infinite' }} />}
               {lang === 'ar'
-                ? 'التعرف على الكلام غير مدعوم في هذا المتصفح. جرّب Chrome أو Edge.'
-                : 'Speech recognition is not supported in this browser. Try Chrome or Edge.'}
+                ? (transcribing ? 'جارٍ التحويل بـ Whisper…' : 'النص المُحوَّل')
+                : (transcribing ? 'Transcribing with Whisper…' : 'Transcript')}
             </div>
-          )}
+            {transcriptError ? (
+              <p style={{ margin: 0, fontSize: 14, color: '#ef4444' }}>{transcriptError}</p>
+            ) : savedTranscript ? (
+              <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.65, color: 'var(--fg)' }}>{savedTranscript}</p>
+            ) : (
+              <p style={{ margin: 0, fontSize: 14, color: 'var(--fg3)', fontStyle: 'italic' }}>
+                {recording
+                  ? (lang === 'ar' ? 'جارٍ التسجيل…' : 'Recording…')
+                  : transcribing
+                  ? (lang === 'ar' ? 'جارٍ معالجة الصوت…' : 'Processing audio…')
+                  : (lang === 'ar' ? 'سيظهر النص هنا بعد التسجيل' : 'Transcript will appear after recording')}
+              </p>
+            )}
+          </div>
         </div>
 
         {/* Right: camera + controls */}
@@ -254,7 +229,13 @@ export default function InterviewSessionPage() {
                 <span style={{ background: 'rgba(0,0,0,.5)', color: '#fff', fontSize: 12, fontWeight: 600, padding: '5px 10px', borderRadius: 8 }}>{fmt(elapsed)}</span>
               </div>
             )}
-            {isRecorded && !recording && (
+            {transcribing && (
+              <div style={{ position: 'absolute', top: 12, left: 12, display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(245,158,11,.9)', color: '#fff', fontSize: 12, fontWeight: 700, padding: '5px 10px', borderRadius: 8 }}>
+                <Loader2 size={13} style={{ animation: 'qspin 1s linear infinite' }} />
+                {lang === 'ar' ? 'تحويل…' : 'Transcribing…'}
+              </div>
+            )}
+            {isRecorded && !recording && !transcribing && (
               <div style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(16,185,129,.9)', color: '#fff', fontSize: 12, fontWeight: 700, padding: '5px 10px', borderRadius: 8 }}>
                 ✓ {tr.session.recorded}
               </div>
@@ -263,12 +244,15 @@ export default function InterviewSessionPage() {
 
           {/* Controls */}
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <button onClick={toggleRecord} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, border: 'none', background: recording ? '#ef4444' : 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 15, padding: '12px 18px', borderRadius: 12, cursor: 'pointer', flex: 1 }}>
+            <button
+              onClick={toggleRecord}
+              disabled={transcribing}
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, border: 'none', background: recording ? '#ef4444' : 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 15, padding: '12px 18px', borderRadius: 12, cursor: transcribing ? 'not-allowed' : 'pointer', flex: 1, opacity: transcribing ? 0.6 : 1 }}>
               {recording ? <Square size={18} /> : isRecorded ? <RotateCcw size={18} /> : <Play size={18} />}
               {recording ? tr.session.stop : isRecorded ? tr.session.rerecord : tr.session.record}
             </button>
-            {isRecorded && !recording && (
-              <button onClick={reRecord} title={tr.session.rerecord} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg2)', fontFamily: 'inherit', fontSize: 14, padding: '12px 14px', borderRadius: 12, cursor: 'pointer' }}>
+            {(isRecorded || transcriptError) && !recording && (
+              <button onClick={reRecord} disabled={transcribing} title={tr.session.rerecord} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg2)', fontFamily: 'inherit', fontSize: 14, padding: '12px 14px', borderRadius: 12, cursor: transcribing ? 'not-allowed' : 'pointer', opacity: transcribing ? 0.6 : 1 }}>
                 <RotateCcw size={17} />
               </button>
             )}
@@ -278,9 +262,15 @@ export default function InterviewSessionPage() {
             </button>
           </div>
 
-          {!canProceed && (
+          {!canProceed && !recording && !transcribing && (
             <p style={{ margin: 0, fontSize: 13, color: 'var(--fg3)', textAlign: 'center' }}>
               {lang === 'ar' ? 'سجّل إجابتك للمتابعة' : 'Record your answer to continue'}
+            </p>
+          )}
+          {transcribing && (
+            <p style={{ margin: 0, fontSize: 13, color: '#f59e0b', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <Loader2 size={13} style={{ animation: 'qspin 1s linear infinite' }} />
+              {lang === 'ar' ? 'جارٍ تحليل الصوت بـ Whisper…' : 'Whisper is processing your audio…'}
             </p>
           )}
         </div>

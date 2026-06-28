@@ -1,9 +1,10 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Presentation, Play, Square, Sparkles } from 'lucide-react';
+import { Presentation, Play, Square, Sparkles, Loader2 } from 'lucide-react';
 import { useApp } from '@/lib/context';
 import { t } from '@/lib/i18n';
+import { transcribeAudio } from '@/lib/ai';
 
 function fmt(s: number) {
   const m = Math.floor(s / 60), ss = s % 60;
@@ -11,18 +12,24 @@ function fmt(s: number) {
 }
 
 export default function PresentationRecordingPage() {
-  const { lang, topic, setPresResults } = useApp();
+  const { lang, intLang, topic, setPresResults } = useApp();
   const tr = t(lang);
   const router = useRouter();
 
   const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [done, setDone] = useState(false);
   const [camOn, setCamOn] = useState(false);
   const [camError, setCamError] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [error, setError] = useState('');
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const transcriptRef = useRef('');
 
   const enableCam = useCallback(async () => {
     try {
@@ -44,8 +51,42 @@ export default function PresentationRecordingPage() {
   const toggleRecord = () => {
     if (recording) {
       if (timerRef.current) clearInterval(timerRef.current);
+      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+        recorderRef.current.stop();
+      }
       setRecording(false);
     } else {
+      const stream = streamRef.current;
+      if (!stream) return;
+
+      chunksRef.current = [];
+      setError('');
+      setDone(false);
+
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+
+      recorder.onstop = async () => {
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        setTranscribing(true);
+        try {
+          const transcript = await transcribeAudio(blob, intLang);
+          transcriptRef.current = transcript.trim();
+          setDone(true);
+        } catch (err) {
+          console.error('Transcription error:', err);
+          setError(
+            lang === 'ar'
+              ? 'تعذّر تحويل الصوت إلى نص. حاول مجددًا.'
+              : 'Could not transcribe audio. Please try again.'
+          );
+        } finally {
+          setTranscribing(false);
+        }
+      };
+
+      recorderRef.current = recorder;
+      recorder.start();
       setRecording(true);
       setElapsed(0);
       if (timerRef.current) clearInterval(timerRef.current);
@@ -53,7 +94,11 @@ export default function PresentationRecordingPage() {
     }
   };
 
-  const submit = () => { stopCam(); setPresResults(null); router.push('/presentation/results'); };
+  const submit = () => {
+    stopCam();
+    setPresResults(null);
+    router.push('/presentation/results');
+  };
 
   return (
     <section style={{ maxWidth: 920, margin: '0 auto', padding: 'clamp(24px,4vw,48px) clamp(16px,4vw,40px)' }}>
@@ -79,7 +124,30 @@ export default function PresentationRecordingPage() {
             <span style={{ background: 'rgba(0,0,0,.5)', color: '#fff', fontSize: 12, fontWeight: 600, padding: '5px 10px', borderRadius: 8 }}>{fmt(elapsed)}</span>
           </div>
         )}
+        {transcribing && (
+          <div style={{ position: 'absolute', top: 14, left: 14, display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(139,92,246,.9)', color: '#fff', fontSize: 12, fontWeight: 700, padding: '5px 10px', borderRadius: 8 }}>
+            <Loader2 size={13} style={{ animation: 'qspin 1s linear infinite' }} />
+            {lang === 'ar' ? 'تحويل بـ Whisper…' : 'Transcribing with Whisper…'}
+          </div>
+        )}
+        {done && !recording && !transcribing && (
+          <div style={{ position: 'absolute', top: 14, left: 14, background: 'rgba(16,185,129,.9)', color: '#fff', fontSize: 12, fontWeight: 700, padding: '5px 10px', borderRadius: 8 }}>
+            ✓ {lang === 'ar' ? 'جاهز' : 'Ready'}
+          </div>
+        )}
       </div>
+
+      {/* Transcript preview */}
+      {(done || error) && (
+        <div style={{ background: 'var(--surface)', border: `1px solid ${error ? 'rgba(239,68,68,.3)' : 'rgba(139,92,246,.2)'}`, borderRadius: 14, padding: '14px 18px', marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: error ? '#ef4444' : '#8b5cf6', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '.06em' }}>
+            {lang === 'ar' ? (error ? 'خطأ' : 'النص المُحوَّل') : (error ? 'Error' : 'Transcript')}
+          </div>
+          <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.65, color: error ? '#ef4444' : 'var(--fg)' }}>
+            {error || transcriptRef.current || (lang === 'ar' ? '(لا يوجد كلام مُتعرَّف عليه)' : '(No speech detected)')}
+          </p>
+        </div>
+      )}
 
       {/* Tip */}
       <div style={{ background: 'rgba(139,92,246,.08)', border: '1px solid rgba(139,92,246,.15)', borderRadius: 14, padding: '12px 18px', display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 20 }}>
@@ -89,12 +157,19 @@ export default function PresentationRecordingPage() {
 
       {/* Controls */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <button onClick={toggleRecord} style={{ display: 'inline-flex', alignItems: 'center', gap: 9, border: 'none', background: recording ? '#ef4444' : '#8b5cf6', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 15, padding: '14px 24px', borderRadius: 13, cursor: 'pointer', flex: 1 }}>
+        <button
+          onClick={toggleRecord}
+          disabled={transcribing}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 9, border: 'none', background: recording ? '#ef4444' : '#8b5cf6', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 15, padding: '14px 24px', borderRadius: 13, cursor: transcribing ? 'not-allowed' : 'pointer', flex: 1, opacity: transcribing ? 0.6 : 1 }}>
           {recording ? <Square size={18} /> : <Play size={18} />}
           {recording ? tr.session.stop : tr.session.record}
         </button>
-        <button onClick={submit} style={{ display: 'inline-flex', alignItems: 'center', gap: 9, border: 'none', background: '#8b5cf6', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 15, padding: '14px 24px', borderRadius: 13, cursor: 'pointer', flex: 1 }}>
-          {tr.pres.submit}
+        <button
+          onClick={submit}
+          disabled={recording || transcribing}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 9, border: 'none', background: '#8b5cf6', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 15, padding: '14px 24px', borderRadius: 13, cursor: (recording || transcribing) ? 'not-allowed' : 'pointer', flex: 1, opacity: (recording || transcribing) ? 0.6 : 1 }}>
+          {transcribing ? <Loader2 size={18} style={{ animation: 'qspin 1s linear infinite' }} /> : null}
+          {transcribing ? (lang === 'ar' ? 'جارٍ التحويل…' : 'Transcribing…') : tr.pres.submit}
         </button>
       </div>
     </section>

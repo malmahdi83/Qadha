@@ -23,6 +23,12 @@ async function callEdge<T>(name: string, body: Record<string, unknown>): Promise
   return res.json() as Promise<T>;
 }
 
+async function getAuthToken(): Promise<string> {
+  const supabase = createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.access_token ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+}
+
 export interface GenerateQuestionsParams {
   role: string;
   education: string;
@@ -54,4 +60,24 @@ export async function analyzePerformance<T>(
   params: AnalyzeInterviewParams | AnalyzePresentationParams
 ): Promise<T> {
   return callEdge<T>('analyze-performance', params as unknown as Record<string, unknown>);
+}
+
+export async function transcribeAudio(blob: Blob, lang: string): Promise<string> {
+  const token = await getAuthToken();
+  const form = new FormData();
+  form.append('audio', blob, 'recording.webm');
+  form.append('lang', lang);
+
+  const res = await fetch(`${BASE}/transcribe-audio`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}` },
+    body: form,
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Transcription failed: ${err}`);
+  }
+  const data = await res.json() as { transcript: string };
+  return data.transcript ?? '';
 }
