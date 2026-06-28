@@ -1,0 +1,64 @@
+@import url('https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap');
+
+@import "tailwindcss";
+
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; }
+::selection { background: rgba(2,132,199,.18); }
+
+@keyframes qspin { to { transform: rotate(360deg); } }
+@keyframes qpulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+@keyframes qfade { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+@keyframes qbar { from { transform:scaleX(0); } }
+@keyframes qdash { from { stroke-dashoffset: var(--c); } }
+
+.animate-qpulse { animation: qpulse 2s infinite; }
+.animate-qfade { animation: qfade .4s ease; }
+.animate-qbar { animation: qbar .7s ease forwards; transform-origin: left; }
+[dir="rtl"] .animate-qbar { transform-origin: right; }
+
+/* Theme CSS variables */
+[data-theme="light"] {
+  --bg: #f4f7fb;
+  --surface: #ffffff;
+  --surface2: #eef2f8;
+  --border: #e3e8f0;
+  --fg: #0f1b29;
+  --fg2: #54616f;
+  --fg3: #8794a3;
+  --accent: #0284c7;
+  --accent-fg: #ffffff;
+  --accent-soft: #e0f2fe;
+  --accent-deep: #075985;
+  --accent-light: #38bdf8;
+  --shadow: 0 1px 3px rgba(15,30,45,.08);
+  --shadow-accent: 0 10px 24px rgba(2,132,199,.32);
+}
+
+[data-theme="dark"] {
+  --bg: #0a1420;
+  --surface: #0f1c2b;
+  --surface2: #172940;
+  --border: #26384f;
+  --fg: #e9f1fa;
+  --fg2: #9fb1c4;
+  --fg3: #6a7d92;
+  --accent: #38bdf8;
+  --accent-fg: #04263a;
+  --accent-soft: #0d2e44;
+  --accent-deep: #0284c7;
+  --accent-light: #7dd3fc;
+  --shadow: 0 1px 3px rgba(0,0,0,.5);
+  --shadow-accent: 0 10px 24px rgba(56,189,248,.2);
+}
+
+body {
+  font-family: 'Figtree', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
