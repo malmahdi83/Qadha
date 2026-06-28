@@ -8,8 +8,10 @@ import { t } from '@/lib/i18n';
 // Extend window type for SpeechRecognition
 declare global {
   interface Window {
-    SpeechRecognition: typeof SpeechRecognition;
-    webkitSpeechRecognition: typeof SpeechRecognition;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    SpeechRecognition: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    webkitSpeechRecognition: any;
   }
 }
 
@@ -56,7 +58,8 @@ export default function InterviewSessionPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const srRef = useRef<InstanceType<typeof SpeechRecognition> | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const srRef = useRef<any>(null);
   // Accumulates final results from SpeechRecognition across restarts
   const transcriptRef = useRef('');
 
@@ -87,7 +90,8 @@ export default function InterviewSessionPage() {
     sr.continuous = true;
     sr.interimResults = true;
 
-    sr.onresult = (e: SpeechRecognitionEvent) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    sr.onresult = (e: any) => {
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const res = e.results[i];

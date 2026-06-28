@@ -31,7 +31,7 @@ export interface GenerateQuestionsParams {
 }
 
 export async function generateQuestions(params: GenerateQuestionsParams): Promise<string[]> {
-  const data = await callEdge<{ questions: string[] }>('generate-questions', params);
+  const data = await callEdge<{ questions: string[] }>('generate-questions', params as unknown as Record<string, unknown>);
   return data.questions;
 }
 
@@ -53,5 +53,5 @@ export interface AnalyzePresentationParams {
 export async function analyzePerformance<T>(
   params: AnalyzeInterviewParams | AnalyzePresentationParams
 ): Promise<T> {
-  return callEdge<T>('analyze-performance', params as Record<string, unknown>);
+  return callEdge<T>('analyze-performance', params as unknown as Record<string, unknown>);
 }
