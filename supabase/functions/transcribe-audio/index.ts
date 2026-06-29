@@ -17,7 +17,7 @@ Deno.serve(async (req: Request) => {
   try {
     const form = await req.formData();
     const audio = form.get('audio') as File | null;
-    const lang = form.get('lang') as string ?? 'en';
+    const lang = (form.get('lang') as string) ?? 'en';
 
     if (!audio) {
       return new Response(
@@ -26,15 +26,41 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const outForm = new FormData();
-    outForm.append('file', audio, audio.name || 'recording.webm');
-    outForm.append('model', 'openai/whisper-large-v3');
-    outForm.append('language', lang === 'ar' ? 'ar' : 'en');
+    const audioBytes = new Uint8Array(await audio.arrayBuffer());
+    const language = lang === 'ar' ? 'ar' : 'en';
+    const filename = audio.name || 'recording.webm';
+    const mimeType = audio.type || 'audio/webm';
+
+    // Manually build multipart/form-data body for maximum compatibility
+    const boundary = 'qadha' + Math.random().toString(36).slice(2);
+    const enc = new TextEncoder();
+    const parts: Uint8Array[] = [];
+
+    const addField = (name: string, value: string) => {
+      parts.push(enc.encode(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`));
+    };
+
+    // model field
+    addField('model', 'openai/whisper-large-v3');
+    // language field
+    addField('language', language);
+    // file field
+    parts.push(enc.encode(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${mimeType}\r\n\r\n`));
+    parts.push(audioBytes);
+    parts.push(enc.encode(`\r\n--${boundary}--\r\n`));
+
+    const totalLen = parts.reduce((s, p) => s + p.length, 0);
+    const body = new Uint8Array(totalLen);
+    let offset = 0;
+    for (const p of parts) { body.set(p, offset); offset += p.length; }
 
     const response = await fetch(OPENROUTER_URL, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${OPENROUTER_API_KEY}` },
-      body: outForm,
+      headers: {
+        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      },
+      body,
     });
 
     if (!response.ok) {
