@@ -59,15 +59,18 @@ export default function PresentationRecordingPage() {
       const stream = streamRef.current;
       if (!stream) return;
 
+      const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4', '']
+        .find(m => m === '' || MediaRecorder.isTypeSupported(m)) ?? '';
+
       chunksRef.current = [];
       setError('');
       setDone(false);
 
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
 
       recorder.onstop = async () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
         setTranscribing(true);
         try {
           const transcript = await transcribeAudio(blob, intLang);

@@ -76,18 +76,33 @@ export default function InterviewSessionPage() {
   }, [stopCam]);
 
   const startRecording = useCallback(async () => {
-    if (!streamRef.current) await enableCam();
+    // Ensure we have a stream with audio; fall back to audio-only if camera fails
+    if (!streamRef.current) {
+      await enableCam();
+      if (!streamRef.current) {
+        try {
+          const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+          streamRef.current = s;
+        } catch {
+          setTranscriptError(lang === 'ar' ? 'تعذّر الوصول إلى الميكروفون.' : 'Microphone access denied.');
+          return;
+        }
+      }
+    }
     const stream = streamRef.current;
-    if (!stream) return;
+
+    // Pick a MIME type the browser actually supports
+    const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4', '']
+      .find(m => m === '' || MediaRecorder.isTypeSupported(m)) ?? '';
 
     chunksRef.current = [];
     setTranscriptError('');
 
-    const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
 
     recorder.onstop = async () => {
-      const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+      const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
       setTranscribing(true);
       try {
         const transcript = await transcribeAudio(blob, intLang);
