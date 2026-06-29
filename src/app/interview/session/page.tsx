@@ -47,6 +47,7 @@ export default function InterviewSessionPage() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -63,6 +64,8 @@ export default function InterviewSessionPage() {
   const stopCam = useCallback(() => {
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null; setCamOn(false);
+    audioStreamRef.current?.getTracks().forEach(t => t.stop());
+    audioStreamRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -76,29 +79,28 @@ export default function InterviewSessionPage() {
   }, [stopCam]);
 
   const startRecording = useCallback(async () => {
-    // Ensure we have a stream with audio; fall back to audio-only if camera fails
-    if (!streamRef.current) {
-      await enableCam();
-      if (!streamRef.current) {
-        try {
-          const s = await navigator.mediaDevices.getUserMedia({ audio: true });
-          streamRef.current = s;
-        } catch {
-          setTranscriptError(lang === 'ar' ? 'تعذّر الوصول إلى الميكروفون.' : 'Microphone access denied.');
-          return;
-        }
-      }
+    chunksRef.current = [];
+    setTranscriptError('');
+
+    // Always get a fresh dedicated audio stream for recording
+    let audioStream: MediaStream;
+    try {
+      audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current?.getTracks().forEach(t => t.stop());
+      audioStreamRef.current = audioStream;
+    } catch {
+      setTranscriptError(lang === 'ar' ? 'تعذّر الوصول إلى الميكروفون.' : 'Microphone access denied.');
+      return;
     }
-    const stream = streamRef.current;
+
+    // Start camera preview separately (non-blocking)
+    if (!streamRef.current) enableCam();
 
     // Pick a MIME type the browser actually supports
     const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4', '']
       .find(m => m === '' || MediaRecorder.isTypeSupported(m)) ?? '';
 
-    chunksRef.current = [];
-    setTranscriptError('');
-
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    const recorder = new MediaRecorder(audioStream, mimeType ? { mimeType } : undefined);
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
 
     recorder.onstop = async () => {
@@ -133,6 +135,8 @@ export default function InterviewSessionPage() {
     if (recorderRef.current && recorderRef.current.state !== 'inactive') {
       recorderRef.current.stop();
     }
+    audioStreamRef.current?.getTracks().forEach(t => t.stop());
+    audioStreamRef.current = null;
     setRecording(false);
   }, []);
 
