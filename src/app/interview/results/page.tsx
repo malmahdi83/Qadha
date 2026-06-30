@@ -1,10 +1,10 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, RotateCcw, Loader2, AlertCircle } from 'lucide-react';
+import { ArrowRight, RotateCcw, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
 import { useApp, InterviewResults } from '@/lib/context';
 import { t } from '@/lib/i18n';
-import { analyzePerformance } from '@/lib/ai';
+import { analyzePerformance, saveSession } from '@/lib/ai';
 
 const ROLE_LABELS: Record<string, string> = {
   dev: 'Software Developer', pm: 'Project Manager', acc: 'Accountant',
@@ -50,11 +50,56 @@ function Bar({ label, value, max = 100, color = 'var(--accent)' }: { label: stri
   );
 }
 
+function AccordionCard({
+  index, question, userAnswer, idealAnswer, lang,
+}: { index: number; question: string; userAnswer: string; idealAnswer: string; lang: string }) {
+  const [open, setOpen] = useState(false);
+  const isAr = lang === 'ar';
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 18, overflow: 'hidden', boxShadow: 'var(--shadow)' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 14, padding: '18px 22px', background: 'none', border: 'none', cursor: 'pointer', textAlign: isAr ? 'right' : 'left', fontFamily: 'inherit' }}>
+        <div style={{ width: 32, height: 32, borderRadius: 9, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 14, flexShrink: 0 }}>{index + 1}</div>
+        <span style={{ flex: 1, fontWeight: 600, fontSize: 15, color: 'var(--fg)', lineHeight: 1.4 }}>{question}</span>
+        <ChevronDown size={18} style={{ color: 'var(--fg3)', transition: 'transform .2s', transform: open ? 'rotate(180deg)' : 'none', flexShrink: 0 }} />
+      </button>
+
+      {open && (
+        <div style={{ padding: '0 22px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* User answer */}
+          <div style={{ background: 'rgba(2,132,199,.07)', border: '1.5px solid rgba(2,132,199,.2)', borderRadius: 12, padding: '14px 16px' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' }} />
+              {isAr ? 'إجابتك' : 'Your Answer'}
+            </div>
+            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.65, color: 'var(--fg)', whiteSpace: 'pre-wrap' }}>
+              {userAnswer || (isAr ? '(لم تُقدَّم إجابة)' : '(no answer given)')}
+            </p>
+          </div>
+
+          {/* Ideal answer */}
+          <div style={{ background: 'rgba(16,185,129,.07)', border: '1.5px solid rgba(16,185,129,.25)', borderRadius: 12, padding: '14px 16px' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: '#10b981', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#10b981' }} />
+              {isAr ? 'الإجابة المثالية' : 'Ideal Answer'}
+            </div>
+            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.65, color: 'var(--fg)', whiteSpace: 'pre-wrap' }}>
+              {idealAnswer || (isAr ? 'جارٍ التوليد…' : 'Generating…')}
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function InterviewResultsPage() {
   const { lang, role, education, experience, intLang, questions, answers, interviewResults, setInterviewResults } = useApp();
   const tr = t(lang);
   const router = useRouter();
   const calledRef = useRef(false);
+  const savedRef = useRef(false);
   const [loading, setLoading] = useState(!interviewResults);
   const [error, setError] = useState('');
 
@@ -89,6 +134,37 @@ export default function InterviewResultsPage() {
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Save to DB once results are available
+  useEffect(() => {
+    if (!interviewResults || savedRef.current) return;
+    savedRef.current = true;
+
+    const qaPairs = questions.map((q, i) => ({ question: q, answer: answers[i] || '' }));
+
+    saveSession({
+      mode: 'interview',
+      lang: intLang,
+      role: ROLE_LABELS[role] ?? role,
+      education: EDU_LABELS[education] ?? education,
+      experience: EXP_LABELS[experience] ?? experience,
+      questions: qaPairs,
+      answers: answers,
+      score_overall: interviewResults.overall_score,
+      score_communication: interviewResults.communication,
+      score_confidence: interviewResults.confidence,
+      score_quality: interviewResults.answer_quality,
+      pace_wpm: interviewResults.pace_wpm,
+      filler_words: interviewResults.filler_words,
+      long_pauses: interviewResults.long_pauses,
+      ai_feedback: interviewResults.ai_feedback,
+      strengths: interviewResults.strengths,
+      improvements: interviewResults.improvements,
+      recommendations: interviewResults.recommendations,
+      ideal_answers: interviewResults.ideal_answers,
+    }).catch(console.error);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interviewResults]);
 
   if (loading) {
     return (
@@ -174,7 +250,7 @@ export default function InterviewResultsPage() {
             <h2 style={{ margin: '0 0 18px', fontSize: 17, fontWeight: 700 }}>{lang === 'ar' ? 'كلمات الحشو' : 'Filler Words'}</h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {r2.filler_words.map((f, i) => {
-                const max = r2.filler_words[0].count || 1;
+                const max = r2.filler_words![0].count || 1;
                 return (
                   <div key={i}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
@@ -235,7 +311,7 @@ export default function InterviewResultsPage() {
       )}
 
       {r2.recommendations?.length > 0 && (
-        <div>
+        <div style={{ marginBottom: 32 }}>
           <h2 style={{ margin: '0 0 16px', fontSize: 19, fontWeight: 700 }}>{lang === 'ar' ? 'توصيات للتطوير' : 'Recommendations'}</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(260px,1fr))', gap: 16 }}>
             {r2.recommendations.map((rec, i) => (
@@ -244,6 +320,39 @@ export default function InterviewResultsPage() {
                 <h3 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 700 }}>{rec.title}</h3>
                 <p style={{ margin: 0, color: 'var(--fg2)', fontSize: 13.5, lineHeight: 1.55 }}>{rec.description}</p>
               </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Interview Questions & Ideal Answers */}
+      {questions.length > 0 && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+            <div style={{ flex: 1 }}>
+              <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700 }}>
+                {lang === 'ar' ? 'أسئلة المقابلة والإجابات المثالية' : 'Interview Questions & Ideal Answers'}
+              </h2>
+              <p style={{ margin: '4px 0 0', fontSize: 13.5, color: 'var(--fg3)' }}>
+                {lang === 'ar'
+                  ? 'انقر على كل سؤال لمقارنة إجابتك بالإجابة المثالية'
+                  : 'Click each question to compare your answer with the ideal response'}
+              </p>
+            </div>
+            <div style={{ background: 'rgba(16,185,129,.12)', color: '#10b981', fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 20, whiteSpace: 'nowrap' }}>
+              {lang === 'ar' ? 'بمنهج STAR' : 'STAR Method'}
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {questions.map((q, i) => (
+              <AccordionCard
+                key={i}
+                index={i}
+                question={q}
+                userAnswer={answers[i] || ''}
+                idealAnswer={r2.ideal_answers?.[i]?.ideal_answer ?? ''}
+                lang={lang}
+              />
             ))}
           </div>
         </div>

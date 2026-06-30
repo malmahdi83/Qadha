@@ -63,6 +63,52 @@ export async function analyzePerformance<T>(
   return callEdge<T>('analyze-performance', params as unknown as Record<string, unknown>);
 }
 
+export interface SessionRow {
+  id?: string;
+  mode: 'interview' | 'presentation';
+  lang: string;
+  role?: string;
+  topic?: string;
+  education?: string;
+  experience?: string;
+  questions?: unknown;
+  answers?: unknown;
+  transcript?: string;
+  score_overall?: number;
+  score_communication?: number;
+  score_confidence?: number;
+  score_quality?: number;
+  score_structure?: number;
+  score_comm_effectiveness?: number;
+  pace_wpm?: number;
+  filler_words?: unknown;
+  long_pauses?: number;
+  ai_feedback?: string;
+  strengths?: unknown;
+  improvements?: unknown;
+  recommendations?: unknown;
+  ideal_answers?: unknown;
+  created_at?: string;
+}
+
+export async function saveSession(row: SessionRow): Promise<string | null> {
+  const supabase = createClient();
+  const { data, error } = await supabase.from('sessions').insert(row).select('id').single();
+  if (error) { console.error('saveSession error:', error); return null; }
+  return data?.id ?? null;
+}
+
+export async function getSessions(): Promise<SessionRow[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('sessions')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (error) { console.error('getSessions error:', error); return []; }
+  return (data ?? []) as SessionRow[];
+}
+
 export async function transcribeAudio(blob: Blob, lang: string): Promise<string> {
   const token = await getAuthToken();
   const form = new FormData();

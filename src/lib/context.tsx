@@ -14,6 +14,7 @@ export interface InterviewResults {
   improvements: string[];
   ai_feedback: string;
   recommendations: { title: string; description: string }[];
+  ideal_answers?: { question: string; ideal_answer: string }[];
 }
 
 export interface PresentationResults {

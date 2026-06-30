@@ -10,30 +10,6 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-interface AnalysisResult {
-  overall_score: number;
-  communication: number;
-  confidence: number;
-  answer_quality: number;
-  pace_wpm: number;
-  filler_words: { word: string; count: number }[];
-  long_pauses: number;
-  strengths: string[];
-  improvements: string[];
-  ai_feedback: string;
-  recommendations: { title: string; description: string }[];
-}
-
-interface PresentationResult {
-  overall_score: number;
-  confidence: number;
-  pace_wpm: number;
-  structure: number;
-  communication_effectiveness: number;
-  ai_feedback: string;
-  recommendations: { title: string; description: string }[];
-}
-
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -57,23 +33,27 @@ Deno.serve(async (req: Request) => {
     if (mode === 'interview') {
       const { questions, role, education, experience } = body;
 
-      systemPrompt = 'You are an expert interview performance analyst and coach. Analyze the candidate\'s actual answers carefully and return valid JSON only, no markdown, no extra text. Base ALL scores on the real content of the answers provided.';
+      systemPrompt = `You are an expert interview performance analyst and coach. Analyze the candidate's actual answers carefully and return valid JSON only, no markdown, no extra text. Base ALL scores on the real content of the answers provided. Also generate a professional ideal answer for each question tailored to the candidate's role, education, and experience level — using the STAR method where appropriate.`;
 
       userPrompt = isArabic
         ? `قيّم أداء المرشح بدقة في مقابلة وظيفة ${role} (تعليم: ${education}, خبرة: ${experience}).
+
 حلّل إجاباته الفعلية بعناية:
 ${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. السؤال: ${q.question}\nالإجابة: ${q.answer || '(لم تُقدّم إجابة)'}`).join('\n\n')}
 
-قيّم بناءً على المحتوى الفعلي. أعد JSON فقط:
-{"overall_score":0,"communication":0,"confidence":0,"answer_quality":0,"pace_wpm":0,"filler_words":[{"word":"كلمة","count":0}],"long_pauses":0,"strengths":["نقطة1","نقطة2","نقطة3"],"improvements":["تحسين1","تحسين2","تحسين3"],"ai_feedback":"تقييم شامل مخصص بناءً على الإجابات الفعلية.","recommendations":[{"title":"عنوان1","description":"وصف1"},{"title":"عنوان2","description":"وصف2"},{"title":"عنوان3","description":"وصف3"}]}`
+قيّم بناءً على المحتوى الفعلي، واكتب إجابة مثالية لكل سؤال بالعربية تناسب مستوى ${experience} في ${role} وتستخدم منهج STAR عند الاقتضاء.
+
+أعد JSON فقط:
+{"overall_score":0,"communication":0,"confidence":0,"answer_quality":0,"pace_wpm":0,"filler_words":[{"word":"كلمة","count":0}],"long_pauses":0,"strengths":["نقطة1","نقطة2","نقطة3"],"improvements":["تحسين1","تحسين2","تحسين3"],"ai_feedback":"تقييم شامل مخصص.","recommendations":[{"title":"عنوان1","description":"وصف1"},{"title":"عنوان2","description":"وصف2"},{"title":"عنوان3","description":"وصف3"}],"ideal_answers":[{"question":"السؤال الأول","ideal_answer":"الإجابة المثالية باستخدام STAR"},{"question":"السؤال الثاني","ideal_answer":"الإجابة المثالية"},{"question":"السؤال الثالث","ideal_answer":"الإجابة المثالية"},{"question":"السؤال الرابع","ideal_answer":"الإجابة المثالية"},{"question":"السؤال الخامس","ideal_answer":"الإجابة المثالية"}]}`
         : `Evaluate this candidate's ACTUAL performance for a ${role} role (Education: ${education}, Experience: ${experience}).
 
 Carefully analyze the real content of each answer:
 ${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. Q: ${q.question}\n   A: ${q.answer || '(no answer given)'}`).join('\n\n')}
 
-Score based on the ACTUAL content. Count real filler words. Assess STAR methodology usage, relevance, depth.
+Score based on ACTUAL content. Count real filler words. Assess STAR methodology usage, relevance, and depth. Also write a professional ideal answer for each question in English, tailored to a ${experience}-level ${role} candidate, using STAR method where appropriate.
+
 Return ONLY valid JSON:
-{"overall_score":0,"communication":0,"confidence":0,"answer_quality":0,"pace_wpm":0,"filler_words":[{"word":"um","count":0}],"long_pauses":0,"strengths":["real strength 1","real strength 2","real strength 3"],"improvements":["real area 1","real area 2","real area 3"],"ai_feedback":"Personalized 2-3 sentence feedback based on the actual answers.","recommendations":[{"title":"Title1","description":"Description1"},{"title":"Title2","description":"Description2"},{"title":"Title3","description":"Description3"}]}`;
+{"overall_score":0,"communication":0,"confidence":0,"answer_quality":0,"pace_wpm":0,"filler_words":[{"word":"um","count":0}],"long_pauses":0,"strengths":["real strength 1","real strength 2","real strength 3"],"improvements":["real area 1","real area 2","real area 3"],"ai_feedback":"Personalized 2-3 sentence feedback based on the actual answers.","recommendations":[{"title":"Title1","description":"Description1"},{"title":"Title2","description":"Description2"},{"title":"Title3","description":"Description3"}],"ideal_answers":[{"question":"Question 1 text","ideal_answer":"Ideal answer using STAR where appropriate"},{"question":"Question 2 text","ideal_answer":"Ideal answer"},{"question":"Question 3 text","ideal_answer":"Ideal answer"},{"question":"Question 4 text","ideal_answer":"Ideal answer"},{"question":"Question 5 text","ideal_answer":"Ideal answer"}]}`;
 
     } else if (mode === 'presentation') {
       const { topic, transcript } = body;
@@ -95,13 +75,13 @@ Return ONLY valid JSON:
 
 حلّل المحتوى الفعلي: البنية، الوضوح، الثقة، وتيرة الكلام، كلمات الحشو، الفاعلية.
 أعد JSON فقط:
-{"overall_score":0,"confidence":0,"pace_wpm":0,"structure":0,"communication_effectiveness":0,"ai_feedback":"تقييم مخصص بناءً على النص الفعلي للعرض.","recommendations":[{"title":"عنوان1","description":"وصف1"},{"title":"عنوان2","description":"وصف2"},{"title":"عنوان3","description":"وصف3"}]}`
+{"overall_score":0,"confidence":0,"pace_wpm":0,"structure":0,"communication_effectiveness":0,"ai_feedback":"تقييم مخصص.","recommendations":[{"title":"عنوان1","description":"وصف1"},{"title":"عنوان2","description":"وصف2"},{"title":"عنوان3","description":"وصف3"}]}`
         : `Evaluate this ACTUAL presentation on: "${topic}"
 
-Full transcript of what was said:
+Full transcript:
 "${transcript}"
 
-Analyze the real content: structure, clarity, confidence, speaking pace (estimate WPM from transcript length), filler words, communication effectiveness, engagement.
+Analyze real content: structure, clarity, confidence, speaking pace (estimate WPM), filler words, communication effectiveness.
 Return ONLY valid JSON:
 {"overall_score":0,"confidence":0,"pace_wpm":0,"structure":0,"communication_effectiveness":0,"ai_feedback":"Personalized 2-3 sentence feedback based on the actual transcript.","recommendations":[{"title":"Title1","description":"Description1"},{"title":"Title2","description":"Description2"},{"title":"Title3","description":"Description3"}]}`;
 
@@ -127,7 +107,7 @@ Return ONLY valid JSON:
           { role: 'user', content: userPrompt },
         ],
         temperature: 0.4,
-        max_tokens: 2048,
+        max_tokens: 4096,
       }),
     });
 
@@ -143,7 +123,7 @@ Return ONLY valid JSON:
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content ?? '{}';
 
-    let parsed: AnalysisResult | PresentationResult;
+    let parsed: unknown;
     try {
       parsed = JSON.parse(content);
     } catch {

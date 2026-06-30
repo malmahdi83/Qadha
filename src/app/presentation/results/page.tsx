@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowRight, RotateCcw, Loader2, AlertCircle } from 'lucide-react';
 import { useApp, PresentationResults } from '@/lib/context';
 import { t } from '@/lib/i18n';
-import { analyzePerformance } from '@/lib/ai';
+import { analyzePerformance, saveSession } from '@/lib/ai';
 
 const VIOLET = '#8b5cf6';
 const VIOLET_SOFT = 'rgba(139,92,246,.1)';
@@ -47,6 +47,7 @@ export default function PresentationResultsPage() {
   const tr = t(lang);
   const router = useRouter();
   const calledRef = useRef(false);
+  const savedRef = useRef(false);
   const [loading, setLoading] = useState(!presResults);
   const [error, setError] = useState('');
 
@@ -70,6 +71,27 @@ export default function PresentationResultsPage() {
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Save to DB once results are available
+  useEffect(() => {
+    if (!presResults || savedRef.current) return;
+    savedRef.current = true;
+
+    saveSession({
+      mode: 'presentation',
+      lang: intLang,
+      topic: topic || 'General presentation',
+      transcript: presTranscript || undefined,
+      score_overall: presResults.overall_score,
+      score_confidence: presResults.confidence,
+      score_structure: presResults.structure,
+      score_comm_effectiveness: presResults.communication_effectiveness,
+      pace_wpm: presResults.pace_wpm,
+      ai_feedback: presResults.ai_feedback,
+      recommendations: presResults.recommendations,
+    }).catch(console.error);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presResults]);
 
   if (loading) {
     return (
