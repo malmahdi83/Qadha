@@ -269,19 +269,29 @@ export default function InterviewResultsPage() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 20, marginBottom: 20 }}>
-        {r2.strengths?.length > 0 && (
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, padding: 28, boxShadow: 'var(--shadow)' }}>
-            <h2 style={{ margin: '0 0 16px', fontSize: 17, fontWeight: 700 }}>{lang === 'ar' ? 'نقاط القوة' : 'Strengths'}</h2>
-            <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {r2.strengths.map((s, i) => (
-                <li key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                  <span style={{ fontSize: 15, color: '#10b981', flexShrink: 0 }}>✓</span>
-                  <span style={{ fontSize: 14, color: 'var(--fg2)' }}>{s}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        {r2.strengths?.length > 0 && (() => {
+          const noStrengths = r2.strengths.length === 1 && (
+            r2.strengths[0].includes('No clear strengths') ||
+            r2.strengths[0].includes('لم تتضح نقاط قوة')
+          );
+          return (
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, padding: 28, boxShadow: 'var(--shadow)' }}>
+              <h2 style={{ margin: '0 0 16px', fontSize: 17, fontWeight: 700 }}>{lang === 'ar' ? 'نقاط القوة' : 'Strengths'}</h2>
+              {noStrengths ? (
+                <p style={{ margin: 0, fontSize: 14, color: 'var(--fg3)', fontStyle: 'italic' }}>{r2.strengths[0]}</p>
+              ) : (
+                <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {r2.strengths.map((s, i) => (
+                    <li key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                      <span style={{ fontSize: 15, color: '#10b981', flexShrink: 0 }}>✓</span>
+                      <span style={{ fontSize: 14, color: 'var(--fg2)' }}>{s}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })()}
 
         {r2.improvements?.length > 0 && (
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, padding: 28, boxShadow: 'var(--shadow)' }}>

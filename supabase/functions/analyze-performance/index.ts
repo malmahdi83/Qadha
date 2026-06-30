@@ -33,33 +33,71 @@ Deno.serve(async (req: Request) => {
     if (mode === 'interview') {
       const { questions, role, education, experience } = body;
 
-      systemPrompt = `You are an expert interview performance analyst and coach. Analyze the candidate's actual answers carefully and return valid JSON only, no markdown, no extra text. Base ALL scores on the real content of the answers provided. Also generate a professional ideal answer for each question tailored to the candidate's role, education, and experience level — using the STAR method where appropriate.`;
+      systemPrompt = `You are a strict, realistic interview performance analyst — like a senior hiring manager who has seen thousands of interviews. Your job is to evaluate the ACTUAL quality of what the candidate said, not what they could have said.
+
+CRITICAL RULES:
+1. Be brutally honest. Do NOT inflate scores. A short, vague, or irrelevant answer must score LOW.
+2. Score each dimension based ONLY on evidence in the actual answers.
+3. Scoring rubric you MUST follow:
+   - Empty / no answer → 0-10
+   - 1-3 word answer or "I don't know" → 5-15
+   - Very short (<10 words), incomplete → 10-30
+   - Generic answer, no examples, no structure → 30-50
+   - Decent answer with some specifics → 50-65
+   - Good answer with clear examples → 65-80
+   - Excellent STAR-structured, specific, professional → 80-100
+4. overall_score = weighted average of ALL answers' quality. If most answers are poor, overall must be LOW (under 40).
+5. Strengths: ONLY list strengths that are CLEARLY and DIRECTLY supported by specific things the candidate actually said. If the answers are weak, vague, or empty, write exactly: "No clear strengths could be identified from the answers provided." — do NOT invent strengths.
+6. Improvements: must be specific, actionable, and tied to the ACTUAL weaknesses observed in the answers.
+7. ai_feedback: be honest and direct, like a real coach. Point out weak answers specifically. Do NOT say "great effort" if the answers were poor.
+8. Return valid JSON only, no markdown, no extra text.`;
+
+
 
       userPrompt = isArabic
-        ? `قيّم أداء المرشح بدقة في مقابلة وظيفة ${role} (تعليم: ${education}, خبرة: ${experience}).
+        ? `أنت محلّل مقابلات صارم وواقعي. قيّم أداء هذا المرشح لوظيفة ${role} (تعليم: ${education}, خبرة: ${experience}).
 
-حلّل إجاباته الفعلية بعناية:
-${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. السؤال: ${q.question}\nالإجابة: ${q.answer || '(لم تُقدّم إجابة)'}`).join('\n\n')}
+إجاباته الفعلية:
+${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. السؤال: ${q.question}\nالإجابة: "${q.answer || '(لم يُقدِّم إجابة)'}"`).join('\n\n')}
 
-تعليمات التقييم:
-- احسب كلمات الحشو الفعلية من نص الإجابات (مثل: يعني، اممم، آه، طيب، صراحة، في الحقيقة). ضع العدد الحقيقي الذي وجدته في النص، وليس أرقامًا عشوائية.
-- قيّم الدرجات بناءً على المحتوى الفعلي فقط.
-- اكتب إجابة مثالية لكل سؤال بالعربية تناسب مستوى ${experience} في ${role} وتستخدم منهج STAR عند الاقتضاء.
+تعليمات صارمة يجب اتباعها:
+1. قيّم كل إجابة بناءً على: الصلة بالسؤال، الاكتمال، التحديد، الاحترافية، وجود أمثلة، منهج STAR.
+2. سلّم الدرجات وفق هذا المقياس الصارم:
+   - إجابة فارغة أو "لا أعرف" → 0-15
+   - إجابة قصيرة جداً (أقل من 10 كلمات) → 10-30
+   - إجابة عامة بدون أمثلة → 30-50
+   - إجابة جيدة مع أمثلة → 60-80
+   - إجابة ممتازة بمنهج STAR → 80-100
+3. overall_score = متوسط حقيقي لجودة كل الإجابات. إذا كانت معظم الإجابات ضعيفة، يجب أن تكون النتيجة الإجمالية منخفضة (أقل من 40).
+4. نقاط القوة: اذكرها فقط إذا كانت مدعومة بوضوح من الإجابات الفعلية. إذا كانت الإجابات ضعيفة اكتب بالضبط: ["لم تتضح نقاط قوة واضحة من إجابات هذه الجلسة."]
+5. احسب كلمات الحشو الفعلية فقط من نص الإجابات (يعني، اممم، آه، طيب، صراحة).
+6. اكتب إجابة مثالية لكل سؤال بالعربية بمنهج STAR مناسبة لمستوى ${experience} في ${role}.
 
-أعد JSON فقط بهذا الشكل (استبدل كل القيم بالبيانات الحقيقية):
-{"overall_score":85,"communication":80,"confidence":75,"answer_quality":82,"pace_wpm":120,"filler_words":[{"word":"يعني","count":5},{"word":"اممم","count":8}],"long_pauses":2,"strengths":["نقطة قوة حقيقية 1","نقطة قوة حقيقية 2","نقطة قوة حقيقية 3"],"improvements":["مجال تحسين حقيقي 1","مجال تحسين حقيقي 2","مجال تحسين حقيقي 3"],"ai_feedback":"تغذية راجعة مخصصة بناءً على الإجابات الفعلية.","recommendations":[{"title":"عنوان توصية 1","description":"وصف التوصية 1"},{"title":"عنوان توصية 2","description":"وصف التوصية 2"},{"title":"عنوان توصية 3","description":"وصف التوصية 3"}],"ideal_answers":[{"question":"نص السؤال الأول","ideal_answer":"الإجابة المثالية باستخدام STAR"},{"question":"نص السؤال الثاني","ideal_answer":"الإجابة المثالية"},{"question":"نص السؤال الثالث","ideal_answer":"الإجابة المثالية"},{"question":"نص السؤال الرابع","ideal_answer":"الإجابة المثالية"},{"question":"نص السؤال الخامس","ideal_answer":"الإجابة المثالية"}]}`
-        : `Evaluate this candidate's ACTUAL performance for a ${role} role (Education: ${education}, Experience: ${experience}).
+أعد JSON فقط، جميع القيم يجب أن تعكس الإجابات الفعلية:
+{"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"pace_wpm":110,"filler_words":[{"word":"يعني","count":4}],"long_pauses":3,"strengths":["نقطة قوة حقيقية مدعومة بالإجابات أو الجملة الثابتة إذا لم توجد"],"improvements":["تحسين محدد مبني على ضعف فعلي في الإجابة 1","تحسين محدد 2","تحسين محدد 3"],"ai_feedback":"تغذية راجعة صريحة وصادقة كمدرب مقابلات حقيقي، تشير إلى الإجابات الضعيفة بالتحديد.","recommendations":[{"title":"توصية محددة 1","description":"نصيحة عملية 1"},{"title":"توصية محددة 2","description":"نصيحة عملية 2"},{"title":"توصية محددة 3","description":"نصيحة عملية 3"}],"ideal_answers":[{"question":"نص السؤال 1","ideal_answer":"إجابة مثالية بمنهج STAR"},{"question":"نص السؤال 2","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 3","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 4","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 5","ideal_answer":"إجابة مثالية"}]}`
+        : `You are a strict, realistic interview coach evaluating a candidate for a ${role} role (Education: ${education}, Experience: ${experience}).
 
-Carefully analyze the real content of each answer:
-${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. Q: ${q.question}\n   A: ${q.answer || '(no answer given)'}`).join('\n\n')}
+Candidate's actual answers:
+${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. Q: ${q.question}\n   A: "${q.answer || '(no answer given)'}"`).join('\n\n')}
 
-Instructions:
-- Count REAL filler words from the actual answer text (um, uh, like, you know, basically, actually, so, right). Put the REAL count you found — do NOT copy example numbers.
-- Score based on ACTUAL content only.
-- Write a professional ideal answer for each question tailored to a ${experience}-level ${role} candidate using STAR method where appropriate.
+STRICT EVALUATION RULES — follow exactly:
+1. Evaluate each answer on: relevance, completeness, specificity, professionalism, use of examples, STAR structure.
+2. Apply this scoring scale — do NOT deviate:
+   - Empty / "I don't know" / no answer → 0-15
+   - 1-5 words → 5-20
+   - Very short (<10 words), incomplete → 10-30
+   - Generic, no examples, no structure → 30-50
+   - Decent answer with some specifics → 50-65
+   - Good answer with clear examples → 65-80
+   - Excellent STAR-structured, specific → 80-100
+3. overall_score = honest weighted average of ALL answers. If most answers are short/vague/empty, overall MUST be under 40.
+4. strengths: ONLY list if clearly supported by actual answer content. If answers are weak, return exactly: ["No clear strengths could be identified from the answers provided."]
+5. Count REAL filler words from text. Do NOT copy example counts.
+6. Write a professional ideal answer for each question using STAR, tailored to ${experience}-level ${role}.
+7. ai_feedback: be direct and honest like a real coach. Name the weak answers specifically. Do NOT pad with generic praise.
 
-Return ONLY valid JSON, replacing ALL values with real data:
-{"overall_score":85,"communication":80,"confidence":75,"answer_quality":82,"pace_wpm":130,"filler_words":[{"word":"um","count":6},{"word":"like","count":4}],"long_pauses":2,"strengths":["Real strength 1","Real strength 2","Real strength 3"],"improvements":["Real improvement area 1","Real improvement area 2","Real improvement area 3"],"ai_feedback":"Personalized feedback based on actual answers.","recommendations":[{"title":"Real recommendation 1","description":"Specific advice 1"},{"title":"Real recommendation 2","description":"Specific advice 2"},{"title":"Real recommendation 3","description":"Specific advice 3"}],"ideal_answers":[{"question":"Actual question 1 text","ideal_answer":"Ideal STAR answer for question 1"},{"question":"Actual question 2 text","ideal_answer":"Ideal answer for question 2"},{"question":"Actual question 3 text","ideal_answer":"Ideal answer for question 3"},{"question":"Actual question 4 text","ideal_answer":"Ideal answer for question 4"},{"question":"Actual question 5 text","ideal_answer":"Ideal answer for question 5"}]}`;
+Return ONLY valid JSON, all values must reflect actual answer quality:
+{"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"pace_wpm":120,"filler_words":[{"word":"um","count":3}],"long_pauses":2,"strengths":["Genuine strength from answers, or the fixed message if none"],"improvements":["Specific improvement tied to weak answer 1","Specific improvement 2","Specific improvement 3"],"ai_feedback":"Direct, honest coaching feedback naming which answers were weak and why.","recommendations":[{"title":"Specific recommendation 1","description":"Practical advice 1"},{"title":"Specific recommendation 2","description":"Practical advice 2"},{"title":"Specific recommendation 3","description":"Practical advice 3"}],"ideal_answers":[{"question":"Actual Q1 text","ideal_answer":"STAR ideal answer for Q1"},{"question":"Actual Q2 text","ideal_answer":"Ideal answer for Q2"},{"question":"Actual Q3 text","ideal_answer":"Ideal answer for Q3"},{"question":"Actual Q4 text","ideal_answer":"Ideal answer for Q4"},{"question":"Actual Q5 text","ideal_answer":"Ideal answer for Q5"}]}`;
 
     } else if (mode === 'presentation') {
       const { topic, transcript } = body;
