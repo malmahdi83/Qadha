@@ -41,19 +41,25 @@ Deno.serve(async (req: Request) => {
 حلّل إجاباته الفعلية بعناية:
 ${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. السؤال: ${q.question}\nالإجابة: ${q.answer || '(لم تُقدّم إجابة)'}`).join('\n\n')}
 
-قيّم بناءً على المحتوى الفعلي، واكتب إجابة مثالية لكل سؤال بالعربية تناسب مستوى ${experience} في ${role} وتستخدم منهج STAR عند الاقتضاء.
+تعليمات التقييم:
+- احسب كلمات الحشو الفعلية من نص الإجابات (مثل: يعني، اممم، آه، طيب، صراحة، في الحقيقة). ضع العدد الحقيقي الذي وجدته في النص، وليس أرقامًا عشوائية.
+- قيّم الدرجات بناءً على المحتوى الفعلي فقط.
+- اكتب إجابة مثالية لكل سؤال بالعربية تناسب مستوى ${experience} في ${role} وتستخدم منهج STAR عند الاقتضاء.
 
-أعد JSON فقط:
-{"overall_score":0,"communication":0,"confidence":0,"answer_quality":0,"pace_wpm":0,"filler_words":[{"word":"يعني","count":3},{"word":"اممم","count":2}],"long_pauses":0,"strengths":["نقطة1","نقطة2","نقطة3"],"improvements":["تحسين1","تحسين2","تحسين3"],"ai_feedback":"تقييم شامل مخصص.","recommendations":[{"title":"عنوان1","description":"وصف1"},{"title":"عنوان2","description":"وصف2"},{"title":"عنوان3","description":"وصف3"}],"ideal_answers":[{"question":"السؤال الأول","ideal_answer":"الإجابة المثالية باستخدام STAR"},{"question":"السؤال الثاني","ideal_answer":"الإجابة المثالية"},{"question":"السؤال الثالث","ideal_answer":"الإجابة المثالية"},{"question":"السؤال الرابع","ideal_answer":"الإجابة المثالية"},{"question":"السؤال الخامس","ideal_answer":"الإجابة المثالية"}]}`
+أعد JSON فقط بهذا الشكل (استبدل كل القيم بالبيانات الحقيقية):
+{"overall_score":85,"communication":80,"confidence":75,"answer_quality":82,"pace_wpm":120,"filler_words":[{"word":"يعني","count":5},{"word":"اممم","count":8}],"long_pauses":2,"strengths":["نقطة قوة حقيقية 1","نقطة قوة حقيقية 2","نقطة قوة حقيقية 3"],"improvements":["مجال تحسين حقيقي 1","مجال تحسين حقيقي 2","مجال تحسين حقيقي 3"],"ai_feedback":"تغذية راجعة مخصصة بناءً على الإجابات الفعلية.","recommendations":[{"title":"عنوان توصية 1","description":"وصف التوصية 1"},{"title":"عنوان توصية 2","description":"وصف التوصية 2"},{"title":"عنوان توصية 3","description":"وصف التوصية 3"}],"ideal_answers":[{"question":"نص السؤال الأول","ideal_answer":"الإجابة المثالية باستخدام STAR"},{"question":"نص السؤال الثاني","ideal_answer":"الإجابة المثالية"},{"question":"نص السؤال الثالث","ideal_answer":"الإجابة المثالية"},{"question":"نص السؤال الرابع","ideal_answer":"الإجابة المثالية"},{"question":"نص السؤال الخامس","ideal_answer":"الإجابة المثالية"}]}`
         : `Evaluate this candidate's ACTUAL performance for a ${role} role (Education: ${education}, Experience: ${experience}).
 
 Carefully analyze the real content of each answer:
 ${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. Q: ${q.question}\n   A: ${q.answer || '(no answer given)'}`).join('\n\n')}
 
-Score based on ACTUAL content. Count real filler words. Assess STAR methodology usage, relevance, and depth. Also write a professional ideal answer for each question in English, tailored to a ${experience}-level ${role} candidate, using STAR method where appropriate.
+Instructions:
+- Count REAL filler words from the actual answer text (um, uh, like, you know, basically, actually, so, right). Put the REAL count you found — do NOT copy example numbers.
+- Score based on ACTUAL content only.
+- Write a professional ideal answer for each question tailored to a ${experience}-level ${role} candidate using STAR method where appropriate.
 
-Return ONLY valid JSON:
-{"overall_score":0,"communication":0,"confidence":0,"answer_quality":0,"pace_wpm":0,"filler_words":[{"word":"um","count":0}],"long_pauses":0,"strengths":["real strength 1","real strength 2","real strength 3"],"improvements":["real area 1","real area 2","real area 3"],"ai_feedback":"Personalized 2-3 sentence feedback based on the actual answers.","recommendations":[{"title":"Title1","description":"Description1"},{"title":"Title2","description":"Description2"},{"title":"Title3","description":"Description3"}],"ideal_answers":[{"question":"Question 1 text","ideal_answer":"Ideal answer using STAR where appropriate"},{"question":"Question 2 text","ideal_answer":"Ideal answer"},{"question":"Question 3 text","ideal_answer":"Ideal answer"},{"question":"Question 4 text","ideal_answer":"Ideal answer"},{"question":"Question 5 text","ideal_answer":"Ideal answer"}]}`;
+Return ONLY valid JSON, replacing ALL values with real data:
+{"overall_score":85,"communication":80,"confidence":75,"answer_quality":82,"pace_wpm":130,"filler_words":[{"word":"um","count":6},{"word":"like","count":4}],"long_pauses":2,"strengths":["Real strength 1","Real strength 2","Real strength 3"],"improvements":["Real improvement area 1","Real improvement area 2","Real improvement area 3"],"ai_feedback":"Personalized feedback based on actual answers.","recommendations":[{"title":"Real recommendation 1","description":"Specific advice 1"},{"title":"Real recommendation 2","description":"Specific advice 2"},{"title":"Real recommendation 3","description":"Specific advice 3"}],"ideal_answers":[{"question":"Actual question 1 text","ideal_answer":"Ideal STAR answer for question 1"},{"question":"Actual question 2 text","ideal_answer":"Ideal answer for question 2"},{"question":"Actual question 3 text","ideal_answer":"Ideal answer for question 3"},{"question":"Actual question 4 text","ideal_answer":"Ideal answer for question 4"},{"question":"Actual question 5 text","ideal_answer":"Ideal answer for question 5"}]}`;
 
     } else if (mode === 'presentation') {
       const { topic, transcript } = body;
