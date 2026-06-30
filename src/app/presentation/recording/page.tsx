@@ -12,7 +12,7 @@ function fmt(s: number) {
 }
 
 export default function PresentationRecordingPage() {
-  const { lang, intLang, topic, setPresResults } = useApp();
+  const { lang, intLang, topic, setPresResults, setPresTranscript } = useApp();
   const tr = t(lang);
   const router = useRouter();
 
@@ -75,6 +75,7 @@ export default function PresentationRecordingPage() {
         try {
           const transcript = await transcribeAudio(blob, intLang);
           transcriptRef.current = transcript.trim();
+          setPresTranscript(transcript.trim());
           setDone(true);
         } catch (err) {
           console.error('Transcription error:', err);
@@ -98,6 +99,7 @@ export default function PresentationRecordingPage() {
   };
 
   const submit = () => {
+    if (!done) return;
     stopCam();
     setPresResults(null);
     router.push('/presentation/results');
@@ -169,8 +171,8 @@ export default function PresentationRecordingPage() {
         </button>
         <button
           onClick={submit}
-          disabled={recording || transcribing}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 9, border: 'none', background: '#8b5cf6', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 15, padding: '14px 24px', borderRadius: 13, cursor: (recording || transcribing) ? 'not-allowed' : 'pointer', flex: 1, opacity: (recording || transcribing) ? 0.6 : 1 }}>
+          disabled={recording || transcribing || !done}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 9, border: 'none', background: '#8b5cf6', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 15, padding: '14px 24px', borderRadius: 13, cursor: (recording || transcribing || !done) ? 'not-allowed' : 'pointer', flex: 1, opacity: (recording || transcribing || !done) ? 0.5 : 1 }}>
           {transcribing ? <Loader2 size={18} style={{ animation: 'qspin 1s linear infinite' }} /> : null}
           {transcribing ? (lang === 'ar' ? 'جارٍ التحويل…' : 'Transcribing…') : tr.pres.submit}
         </button>

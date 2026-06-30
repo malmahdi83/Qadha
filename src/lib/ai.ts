@@ -54,6 +54,7 @@ export interface AnalyzePresentationParams {
   mode: 'presentation';
   lang: string;
   topic: string;
+  transcript: string;
 }
 
 export async function analyzePerformance<T>(

@@ -53,6 +53,8 @@ interface AppState {
   // Presentation
   topic: string;
   setTopic: (v: string) => void;
+  presTranscript: string;
+  setPresTranscript: (v: string) => void;
 }
 
 const AppContext = createContext<AppState | null>(null);
@@ -65,6 +67,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [experience, setExperience] = useState('junior');
   const [intLang, setIntLang] = useState<Lang>('en');
   const [topic, setTopic] = useState('');
+  const [presTranscript, setPresTranscript] = useState('');
   const [questions, setQuestions] = useState<string[]>([]);
   const [answers, setAnswersState] = useState<string[]>(['', '', '', '', '']);
   const [interviewResults, setInterviewResults] = useState<InterviewResults | null>(null);
@@ -100,6 +103,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       role, education, experience, intLang,
       setRole, setEducation, setExperience, setIntLang,
       topic, setTopic,
+      presTranscript, setPresTranscript,
       questions, setQuestions,
       answers, setAnswer,
       interviewResults, setInterviewResults,

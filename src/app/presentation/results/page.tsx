@@ -43,7 +43,7 @@ function Bar({ label, value, color = VIOLET }: { label: string; value: number; c
 }
 
 export default function PresentationResultsPage() {
-  const { lang, topic, intLang, presResults, setPresResults } = useApp();
+  const { lang, topic, intLang, presTranscript, presResults, setPresResults } = useApp();
   const tr = t(lang);
   const router = useRouter();
   const calledRef = useRef(false);
@@ -58,6 +58,7 @@ export default function PresentationResultsPage() {
       mode: 'presentation',
       lang: intLang,
       topic: topic || 'General presentation',
+      transcript: presTranscript || '',
     })
       .then(res => { setPresResults(res); setLoading(false); })
       .catch(err => {

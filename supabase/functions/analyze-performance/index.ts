@@ -57,20 +57,53 @@ Deno.serve(async (req: Request) => {
     if (mode === 'interview') {
       const { questions, role, education, experience } = body;
 
-      systemPrompt = 'You are an expert interview performance analyst. Return valid JSON only, no markdown, no extra text.';
+      systemPrompt = 'You are an expert interview performance analyst and coach. Analyze the candidate\'s actual answers carefully and return valid JSON only, no markdown, no extra text. Base ALL scores on the real content of the answers provided.';
 
       userPrompt = isArabic
-        ? `قيّم أداء المرشح في مقابلة وظيفة ${role} (تعليم: ${education}, خبرة: ${experience}).\nالإجابات:\n${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. ${q.question}\nإجابة: ${q.answer || '(لم تُقدّم إجابة)'}`).join('\n')}\n\nأعد JSON فقط:\n{"overall_score":75,"communication":70,"confidence":72,"answer_quality":74,"pace_wpm":130,"filler_words":[{"word":"يعني","count":2}],"long_pauses":1,"strengths":["نقطة1","نقطة2","نقطة3"],"improvements":["تحسين1","تحسين2","تحسين3"],"ai_feedback":"تقييم شامل","recommendations":[{"title":"عنوان","description":"وصف"},{"title":"عنوان","description":"وصف"},{"title":"عنوان","description":"وصف"}]}`
-        : `Evaluate this candidate for a ${role} role (Education: ${education}, Experience: ${experience}).\nAnswers:\n${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. Q: ${q.question}\n   A: ${q.answer || '(no answer)'}`).join('\n')}\n\nReturn ONLY valid JSON with real evaluated values:\n{"overall_score":75,"communication":70,"confidence":72,"answer_quality":74,"pace_wpm":130,"filler_words":[{"word":"um","count":2},{"word":"like","count":3}],"long_pauses":2,"strengths":["strength1","strength2","strength3"],"improvements":["improvement1","improvement2","improvement3"],"ai_feedback":"Your personalized 2-3 sentence feedback here.","recommendations":[{"title":"Title1","description":"Description1"},{"title":"Title2","description":"Description2"},{"title":"Title3","description":"Description3"}]}`;
+        ? `قيّم أداء المرشح بدقة في مقابلة وظيفة ${role} (تعليم: ${education}, خبرة: ${experience}).
+حلّل إجاباته الفعلية بعناية:
+${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. السؤال: ${q.question}\nالإجابة: ${q.answer || '(لم تُقدّم إجابة)'}`).join('\n\n')}
+
+قيّم بناءً على المحتوى الفعلي. أعد JSON فقط:
+{"overall_score":0,"communication":0,"confidence":0,"answer_quality":0,"pace_wpm":0,"filler_words":[{"word":"كلمة","count":0}],"long_pauses":0,"strengths":["نقطة1","نقطة2","نقطة3"],"improvements":["تحسين1","تحسين2","تحسين3"],"ai_feedback":"تقييم شامل مخصص بناءً على الإجابات الفعلية.","recommendations":[{"title":"عنوان1","description":"وصف1"},{"title":"عنوان2","description":"وصف2"},{"title":"عنوان3","description":"وصف3"}]}`
+        : `Evaluate this candidate's ACTUAL performance for a ${role} role (Education: ${education}, Experience: ${experience}).
+
+Carefully analyze the real content of each answer:
+${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. Q: ${q.question}\n   A: ${q.answer || '(no answer given)'}`).join('\n\n')}
+
+Score based on the ACTUAL content. Count real filler words. Assess STAR methodology usage, relevance, depth.
+Return ONLY valid JSON:
+{"overall_score":0,"communication":0,"confidence":0,"answer_quality":0,"pace_wpm":0,"filler_words":[{"word":"um","count":0}],"long_pauses":0,"strengths":["real strength 1","real strength 2","real strength 3"],"improvements":["real area 1","real area 2","real area 3"],"ai_feedback":"Personalized 2-3 sentence feedback based on the actual answers.","recommendations":[{"title":"Title1","description":"Description1"},{"title":"Title2","description":"Description2"},{"title":"Title3","description":"Description3"}]}`;
 
     } else if (mode === 'presentation') {
-      const { topic } = body;
+      const { topic, transcript } = body;
 
-      systemPrompt = 'You are a presentation performance analyst. Return valid JSON only, no markdown, no extra text.';
+      if (!transcript || transcript.trim().length < 10) {
+        return new Response(
+          JSON.stringify({ error: 'No presentation content to analyze. Please record your presentation first.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      systemPrompt = 'You are an expert presentation coach and analyst. Analyze the speaker\'s actual transcript carefully and return valid JSON only, no markdown, no extra text. Base ALL scores on the real content of what was said.';
 
       userPrompt = isArabic
-        ? `قيّم عرضاً تقديمياً حول: "${topic}"\nأعد JSON فقط:\n{"overall_score":75,"confidence":70,"pace_wpm":130,"structure":72,"communication_effectiveness":74,"ai_feedback":"تقييم شامل","recommendations":[{"title":"عنوان","description":"وصف"},{"title":"عنوان","description":"وصف"},{"title":"عنوان","description":"وصف"}]}`
-        : `Evaluate a presentation on: "${topic}"\nReturn ONLY valid JSON with real evaluated values:\n{"overall_score":75,"confidence":70,"pace_wpm":130,"structure":72,"communication_effectiveness":74,"ai_feedback":"Your personalized 2-3 sentence feedback here.","recommendations":[{"title":"Title1","description":"Description1"},{"title":"Title2","description":"Description2"},{"title":"Title3","description":"Description3"}]}`;
+        ? `قيّم هذا العرض التقديمي الفعلي حول: "${topic}"
+
+النص الكامل للعرض:
+"${transcript}"
+
+حلّل المحتوى الفعلي: البنية، الوضوح، الثقة، وتيرة الكلام، كلمات الحشو، الفاعلية.
+أعد JSON فقط:
+{"overall_score":0,"confidence":0,"pace_wpm":0,"structure":0,"communication_effectiveness":0,"ai_feedback":"تقييم مخصص بناءً على النص الفعلي للعرض.","recommendations":[{"title":"عنوان1","description":"وصف1"},{"title":"عنوان2","description":"وصف2"},{"title":"عنوان3","description":"وصف3"}]}`
+        : `Evaluate this ACTUAL presentation on: "${topic}"
+
+Full transcript of what was said:
+"${transcript}"
+
+Analyze the real content: structure, clarity, confidence, speaking pace (estimate WPM from transcript length), filler words, communication effectiveness, engagement.
+Return ONLY valid JSON:
+{"overall_score":0,"confidence":0,"pace_wpm":0,"structure":0,"communication_effectiveness":0,"ai_feedback":"Personalized 2-3 sentence feedback based on the actual transcript.","recommendations":[{"title":"Title1","description":"Description1"},{"title":"Title2","description":"Description2"},{"title":"Title3","description":"Description3"}]}`;
 
     } else {
       return new Response(
