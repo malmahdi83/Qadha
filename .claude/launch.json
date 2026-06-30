@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Qadha Dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000
+    },
+    {
+      "name": "Qadha PDF Preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-p", "5500", "."],
+      "port": 5500
+    }
+  ]
+}
