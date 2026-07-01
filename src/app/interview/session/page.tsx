@@ -356,6 +356,21 @@ export default function InterviewSessionPage() {
   return (
     <section style={{ maxWidth: 1160, margin: '0 auto', padding: 'clamp(20px,3.5vw,40px) clamp(16px,4vw,40px)' }}>
 
+      {/* TTS error banner — always visible when voice fails */}
+      {tts.ttsError && (
+        <div style={{ marginBottom: 16, background: '#fef2f2', border: '1.5px solid #fca5a5', borderRadius: 14, padding: '14px 18px', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+          <span style={{ fontSize: 18, flexShrink: 0 }}>🔇</span>
+          <div>
+            <p style={{ margin: 0, fontWeight: 700, fontSize: 13.5, color: '#dc2626' }}>
+              {isAr ? 'تعذّر تشغيل صوت المحاور' : 'AI voice failed to load'}
+            </p>
+            <p style={{ margin: '4px 0 0', fontSize: 12, color: '#ef4444', wordBreak: 'break-all', fontFamily: 'monospace' }}>
+              {tts.ttsError}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Progress bar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 700, fontSize: 13.5, padding: '7px 14px', borderRadius: 20 }}>
