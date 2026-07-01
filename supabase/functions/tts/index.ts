@@ -16,6 +16,15 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    // Fail fast with a clear message if the secret is missing
+    if (!ELEVENLABS_API_KEY) {
+      console.error('ELEVENLABS_API_KEY secret is not set');
+      return new Response(
+        JSON.stringify({ error: 'ELEVENLABS_API_KEY secret is not configured in Supabase Edge Function secrets' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const { text } = await req.json();
 
     if (!text || typeof text !== 'string' || text.trim().length === 0) {
@@ -31,6 +40,7 @@ Deno.serve(async (req: Request) => {
         method: 'POST',
         headers: {
           'xi-api-key': ELEVENLABS_API_KEY,
+          'Authorization': `Bearer ${ELEVENLABS_API_KEY}`,
           'Content-Type': 'application/json',
           'Accept': 'audio/mpeg',
         },
@@ -47,9 +57,9 @@ Deno.serve(async (req: Request) => {
 
     if (!response.ok) {
       const err = await response.text();
-      console.error(`ElevenLabs ${response.status}:`, err);
+      console.error(`ElevenLabs ${response.status} (key_len=${ELEVENLABS_API_KEY.length}):`, err);
       return new Response(
-        JSON.stringify({ error: 'ElevenLabs API error', status: response.status, detail: err }),
+        JSON.stringify({ error: 'ElevenLabs API error', status: response.status, key_len: ELEVENLABS_API_KEY.length, detail: err }),
         { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
