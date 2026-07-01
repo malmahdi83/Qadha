@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const ELEVENLABS_API_KEY = Deno.env.get('ELEVENLABS_API_KEY') ?? '';
-const VOICE_ID = 'w0uhBAmNIG5kUDeaFEsA';
+const VOICE_ID = 'pNInz6obpgDQGcFmaJgB'; // Adam — free tier, eleven_multilingual_v2
 const MODEL_ID = 'eleven_multilingual_v2';
 
 const corsHeaders = {
