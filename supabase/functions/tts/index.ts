@@ -40,7 +40,6 @@ Deno.serve(async (req: Request) => {
         method: 'POST',
         headers: {
           'xi-api-key': ELEVENLABS_API_KEY,
-          'Authorization': `Bearer ${ELEVENLABS_API_KEY}`,
           'Content-Type': 'application/json',
           'Accept': 'audio/mpeg',
         },
