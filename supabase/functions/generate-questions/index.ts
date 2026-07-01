@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const OPENROUTER_API_KEY = Deno.env.get('whisper-large-v3') ?? '';
-const MODEL = 'openai/gpt-4o-mini';
+const MODEL = 'anthropic/claude-opus-4';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 const corsHeaders = {

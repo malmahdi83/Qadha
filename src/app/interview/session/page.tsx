@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { Mic, Square, RotateCcw, ArrowRight, Loader2, Volume2, VolumeX, RefreshCw } from 'lucide-react';
 import { useApp } from '@/lib/context';
 import { t } from '@/lib/i18n';
-import { transcribeAudio } from '@/lib/ai';
+import { transcribeAudio, fetchTTSAudio } from '@/lib/ai';
 
 function fmt(s: number) {
   const m = Math.floor(s / 60), ss = s % 60;
@@ -110,59 +110,65 @@ function AIAvatar({ speaking, listening, isAr }: { speaking: boolean; listening:
   );
 }
 
-// TTS hook
-function useTTS(intLang: string) {
-  const utterRef = useRef<SpeechSynthesisUtterance | null>(null);
+// TTS hook — backed by ElevenLabs via Supabase edge function
+function useTTS() {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const objectUrlRef = useRef<string | null>(null);
+  const abortRef = useRef(false);
   const [speaking, setSpeaking] = useState(false);
-  const [supported, setSupported] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [muted, setMuted] = useState(false);
 
-  useEffect(() => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      setSupported(false);
+  const cleanup = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = '';
+      audioRef.current = null;
+    }
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
     }
   }, []);
 
-  const speak = useCallback((text: string, onEnd?: () => void) => {
-    if (!supported || muted) { onEnd?.(); return; }
-    window.speechSynthesis.cancel();
-
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = intLang === 'ar' ? 'ar-SA' : 'en-US';
-    utter.rate = intLang === 'ar' ? 0.88 : 0.92;
-    utter.pitch = 1.0;
-    utter.volume = 1;
-
-    // Pick best available voice
-    const voices = window.speechSynthesis.getVoices();
-    const langPrefix = intLang === 'ar' ? 'ar' : 'en';
-    const preferred = intLang === 'ar'
-      ? voices.find(v => v.lang === 'ar-SA') ||
-        voices.find(v => v.lang.startsWith('ar'))
-      : voices.find(v => v.lang === 'en-US' && v.name.includes('Google')) ||
-        voices.find(v => v.lang === 'en-US') ||
-        voices.find(v => v.lang.startsWith(langPrefix));
-    if (preferred) utter.voice = preferred;
-
-    utter.onstart = () => setSpeaking(true);
-    utter.onend = () => { setSpeaking(false); onEnd?.(); };
-    utter.onerror = () => { setSpeaking(false); onEnd?.(); };
-
-    utterRef.current = utter;
-    window.speechSynthesis.speak(utter);
-  }, [supported, muted, intLang]);
+  const speak = useCallback(async (text: string, onEnd?: () => void) => {
+    abortRef.current = true;
+    cleanup();
+    abortRef.current = false;
+    if (muted) { onEnd?.(); return; }
+    setLoading(true);
+    try {
+      const blob = await fetchTTSAudio(text);
+      if (abortRef.current) return;
+      const url = URL.createObjectURL(blob);
+      objectUrlRef.current = url;
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => { setSpeaking(false); setLoading(false); cleanup(); onEnd?.(); };
+      audio.onerror = () => { setSpeaking(false); setLoading(false); cleanup(); onEnd?.(); };
+      setLoading(false);
+      setSpeaking(true);
+      await audio.play();
+    } catch {
+      if (!abortRef.current) { setLoading(false); setSpeaking(false); onEnd?.(); }
+    }
+  }, [muted, cleanup]);
 
   const cancel = useCallback(() => {
-    window.speechSynthesis?.cancel();
+    abortRef.current = true;
+    cleanup();
     setSpeaking(false);
-  }, []);
+    setLoading(false);
+  }, [cleanup]);
 
   const toggleMute = useCallback(() => {
-    if (!muted) window.speechSynthesis?.cancel();
+    if (!muted) cancel();
     setMuted(m => !m);
-  }, [muted]);
+  }, [muted, cancel]);
 
-  return { speak, cancel, speaking, supported, muted, toggleMute };
+  useEffect(() => () => { abortRef.current = true; cleanup(); }, [cleanup]);
+
+  return { speak, cancel, speaking, loading, muted, toggleMute };
 }
 
 type Phase = 'speaking' | 'ready' | 'recording' | 'transcribing' | 'done';
@@ -185,7 +191,6 @@ export default function InterviewSessionPage() {
   const [elapsed, setElapsed] = useState(0);
   const [recorded, setRecorded] = useState([false, false, false, false, false]);
   const [transcriptError, setTranscriptError] = useState('');
-  const [voicesReady, setVoicesReady] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const camStreamRef = useRef<MediaStream | null>(null);
@@ -195,28 +200,17 @@ export default function InterviewSessionPage() {
   const chunksRef = useRef<Blob[]>([]);
   const spokenIndexRef = useRef(-1);
 
-  const tts = useTTS(intLang);
+  const tts = useTTS();
 
-  // Wait for voices to load (Chrome loads them async)
+  // Speak question when index changes
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const load = () => setVoicesReady(true);
-    if (window.speechSynthesis?.getVoices().length > 0) { setVoicesReady(true); return; }
-    window.speechSynthesis?.addEventListener('voiceschanged', load);
-    const t = setTimeout(() => setVoicesReady(true), 1500);
-    return () => { window.speechSynthesis?.removeEventListener('voiceschanged', load); clearTimeout(t); };
-  }, []);
-
-  // Speak question when index changes or voices load
-  useEffect(() => {
-    if (!voicesReady) return;
     if (spokenIndexRef.current === qIndex) return;
     spokenIndexRef.current = qIndex;
     setPhase('speaking');
     setTranscriptError('');
     tts.speak(activeQuestions[qIndex], () => setPhase('ready'));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qIndex, voicesReady]);
+  }, [qIndex]);
 
   const enableCam = useCallback(async () => {
     try {
@@ -403,9 +397,13 @@ export default function InterviewSessionPage() {
           {/* Status hint */}
           {phase === 'speaking' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--accent-soft)', border: '1px solid rgba(2,132,199,.15)', borderRadius: 12, padding: '10px 14px' }}>
-              <Volume2 size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+              {tts.loading
+                ? <Loader2 size={15} style={{ color: 'var(--accent)', flexShrink: 0, animation: 'qspin 1s linear infinite' }} />
+                : <Volume2 size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />}
               <p style={{ margin: 0, fontSize: 13, color: 'var(--fg2)' }}>
-                {isAr ? 'المحاور يقرأ السؤال… انتظر حتى ينتهي ثم سجّل إجابتك.' : 'The AI interviewer is reading the question. Wait for it to finish, then record your answer.'}
+                {tts.loading
+                  ? (isAr ? 'جارٍ تحميل صوت المحاور…' : 'Loading interviewer voice…')
+                  : (isAr ? 'المحاور يقرأ السؤال… انتظر حتى ينتهي ثم سجّل إجابتك.' : 'The AI interviewer is reading the question. Wait for it to finish, then record your answer.')}
               </p>
             </div>
           )}
@@ -479,9 +477,13 @@ export default function InterviewSessionPage() {
             {/* Overlays */}
             {phase === 'speaking' && (
               <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-                <Volume2 size={32} style={{ color: '#fff', opacity: .9 }} />
+                {tts.loading
+                  ? <Loader2 size={32} style={{ color: '#fff', opacity: .9, animation: 'qspin 1s linear infinite' }} />
+                  : <Volume2 size={32} style={{ color: '#fff', opacity: .9 }} />}
                 <span style={{ color: '#fff', fontWeight: 700, fontSize: 14 }}>
-                  {isAr ? 'المحاور يتحدث…' : 'Interviewer speaking…'}
+                  {tts.loading
+                    ? (isAr ? 'جارٍ التحميل…' : 'Loading voice…')
+                    : (isAr ? 'المحاور يتحدث…' : 'Interviewer speaking…')}
                 </span>
               </div>
             )}
@@ -577,8 +579,10 @@ export default function InterviewSessionPage() {
           )}
           {phase === 'speaking' && !tts.muted && (
             <p style={{ margin: 0, fontSize: 13, color: 'var(--fg3)', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-              <Volume2 size={13} />
-              {isAr ? 'زر التسجيل سيُفعَّل بعد انتهاء المحاور' : 'Record button unlocks after the interviewer finishes'}
+              {tts.loading ? <Loader2 size={13} style={{ animation: 'qspin 1s linear infinite' }} /> : <Volume2 size={13} />}
+              {tts.loading
+                ? (isAr ? 'جارٍ تحميل الصوت…' : 'Fetching audio…')
+                : (isAr ? 'زر التسجيل سيُفعَّل بعد انتهاء المحاور' : 'Record button unlocks after the interviewer finishes')}
             </p>
           )}
         </div>

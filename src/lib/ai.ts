@@ -109,6 +109,22 @@ export async function getSessions(): Promise<SessionRow[]> {
   return (data ?? []) as SessionRow[];
 }
 
+export async function fetchTTSAudio(text: string): Promise<Blob> {
+  const token = await getAuthToken();
+  const res = await fetch(`${BASE}/tts`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) {
+    throw new Error(`TTS failed: ${await res.text()}`);
+  }
+  return res.blob();
+}
+
 export async function transcribeAudio(blob: Blob, lang: string): Promise<string> {
   const token = await getAuthToken();
   const form = new FormData();
