@@ -115,8 +115,10 @@ function useTTS() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const abortRef = useRef(false);
+  const pendingOnEndRef = useRef<(() => void) | undefined>(undefined);
   const [speaking, setSpeaking] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [playBlocked, setPlayBlocked] = useState(false);
   const [muted, setMuted] = useState(false);
 
   const cleanup = useCallback(() => {
@@ -135,6 +137,8 @@ function useTTS() {
     abortRef.current = true;
     cleanup();
     abortRef.current = false;
+    setPlayBlocked(false);
+    pendingOnEndRef.current = onEnd;
     if (muted) { onEnd?.(); return; }
     setLoading(true);
     try {
@@ -147,18 +151,35 @@ function useTTS() {
       audio.onended = () => { setSpeaking(false); setLoading(false); cleanup(); onEnd?.(); };
       audio.onerror = () => { setSpeaking(false); setLoading(false); cleanup(); onEnd?.(); };
       setLoading(false);
-      setSpeaking(true);
-      await audio.play();
+      try {
+        setSpeaking(true);
+        await audio.play();
+      } catch {
+        // Autoplay blocked by browser — show tap-to-play prompt
+        setSpeaking(false);
+        setPlayBlocked(true);
+      }
     } catch {
       if (!abortRef.current) { setLoading(false); setSpeaking(false); onEnd?.(); }
     }
   }, [muted, cleanup]);
+
+  const manualPlay = useCallback(async () => {
+    if (!audioRef.current) return;
+    setPlayBlocked(false);
+    const onEnd = pendingOnEndRef.current;
+    audioRef.current.onended = () => { setSpeaking(false); cleanup(); onEnd?.(); };
+    audioRef.current.onerror = () => { setSpeaking(false); cleanup(); onEnd?.(); };
+    setSpeaking(true);
+    try { await audioRef.current.play(); } catch { setSpeaking(false); onEnd?.(); }
+  }, [cleanup]);
 
   const cancel = useCallback(() => {
     abortRef.current = true;
     cleanup();
     setSpeaking(false);
     setLoading(false);
+    setPlayBlocked(false);
   }, [cleanup]);
 
   const toggleMute = useCallback(() => {
@@ -168,7 +189,7 @@ function useTTS() {
 
   useEffect(() => () => { abortRef.current = true; cleanup(); }, [cleanup]);
 
-  return { speak, cancel, speaking, loading, muted, toggleMute };
+  return { speak, cancel, manualPlay, speaking, loading, playBlocked, muted, toggleMute };
 }
 
 type Phase = 'speaking' | 'ready' | 'recording' | 'transcribing' | 'done';
@@ -376,14 +397,24 @@ export default function InterviewSessionPage() {
 
             {/* TTS controls */}
             <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
-              <button
-                onClick={replayQuestion}
-                disabled={phase === 'recording' || phase === 'transcribing'}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--fg2)', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, padding: '7px 14px', borderRadius: 9, cursor: 'pointer', opacity: (phase === 'recording' || phase === 'transcribing') ? 0.5 : 1 }}>
-                <RefreshCw size={13} />
-                {isAr ? 'إعادة السؤال' : 'Replay Question'}
-              </button>
-              {phase === 'speaking' && (
+              {tts.playBlocked ? (
+                <button
+                  onClick={tts.manualPlay}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 7, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontSize: 13, fontWeight: 700, padding: '9px 18px', borderRadius: 9, cursor: 'pointer', animation: 'qpulse-btn .9s ease-in-out infinite alternate' }}>
+                  <Volume2 size={14} />
+                  {isAr ? '▶ اضغط لسماع السؤال' : '▶ Tap to hear question'}
+                  <style>{`@keyframes qpulse-btn { from { opacity: 1 } to { opacity: .7 } }`}</style>
+                </button>
+              ) : (
+                <button
+                  onClick={replayQuestion}
+                  disabled={phase === 'recording' || phase === 'transcribing'}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--fg2)', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, padding: '7px 14px', borderRadius: 9, cursor: 'pointer', opacity: (phase === 'recording' || phase === 'transcribing') ? 0.5 : 1 }}>
+                  <RefreshCw size={13} />
+                  {isAr ? 'إعادة السؤال' : 'Replay Question'}
+                </button>
+              )}
+              {phase === 'speaking' && !tts.playBlocked && (
                 <button
                   onClick={() => { tts.cancel(); setPhase(isRecorded ? 'done' : 'ready'); }}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid rgba(239,68,68,.3)', background: 'rgba(239,68,68,.07)', color: '#ef4444', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, padding: '7px 14px', borderRadius: 9, cursor: 'pointer' }}>
@@ -395,7 +426,15 @@ export default function InterviewSessionPage() {
           </div>
 
           {/* Status hint */}
-          {phase === 'speaking' && (
+          {tts.playBlocked && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.25)', borderRadius: 12, padding: '10px 14px' }}>
+              <Volume2 size={15} style={{ color: '#f59e0b', flexShrink: 0 }} />
+              <p style={{ margin: 0, fontSize: 13, color: 'var(--fg2)' }}>
+                {isAr ? 'اضغط على زر "اضغط لسماع السؤال" لتشغيل الصوت.' : 'Tap the button above to play the question aloud.'}
+              </p>
+            </div>
+          )}
+          {phase === 'speaking' && !tts.playBlocked && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--accent-soft)', border: '1px solid rgba(2,132,199,.15)', borderRadius: 12, padding: '10px 14px' }}>
               {tts.loading
                 ? <Loader2 size={15} style={{ color: 'var(--accent)', flexShrink: 0, animation: 'qspin 1s linear infinite' }} />
@@ -475,13 +514,17 @@ export default function InterviewSessionPage() {
             )}
 
             {/* Overlays */}
-            {phase === 'speaking' && (
+            {(phase === 'speaking' || tts.playBlocked) && (
               <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-                {tts.loading
+                {tts.playBlocked
+                  ? <Volume2 size={32} style={{ color: '#f59e0b', opacity: .9 }} />
+                  : tts.loading
                   ? <Loader2 size={32} style={{ color: '#fff', opacity: .9, animation: 'qspin 1s linear infinite' }} />
                   : <Volume2 size={32} style={{ color: '#fff', opacity: .9 }} />}
-                <span style={{ color: '#fff', fontWeight: 700, fontSize: 14 }}>
-                  {tts.loading
+                <span style={{ color: tts.playBlocked ? '#f59e0b' : '#fff', fontWeight: 700, fontSize: 14, textAlign: 'center', padding: '0 16px' }}>
+                  {tts.playBlocked
+                    ? (isAr ? 'اضغط لسماع السؤال' : 'Tap to hear question')
+                    : tts.loading
                     ? (isAr ? 'جارٍ التحميل…' : 'Loading voice…')
                     : (isAr ? 'المحاور يتحدث…' : 'Interviewer speaking…')}
                 </span>
