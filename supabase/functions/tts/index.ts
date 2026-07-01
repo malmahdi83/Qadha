@@ -47,9 +47,9 @@ Deno.serve(async (req: Request) => {
 
     if (!response.ok) {
       const err = await response.text();
-      console.error('ElevenLabs error:', err);
+      console.error(`ElevenLabs ${response.status}:`, err);
       return new Response(
-        JSON.stringify({ error: 'ElevenLabs API error', detail: err }),
+        JSON.stringify({ error: 'ElevenLabs API error', status: response.status, detail: err }),
         { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }

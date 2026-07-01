@@ -119,6 +119,7 @@ function useTTS() {
   const [speaking, setSpeaking] = useState(false);
   const [loading, setLoading] = useState(false);
   const [playBlocked, setPlayBlocked] = useState(false);
+  const [ttsError, setTtsError] = useState('');
   const [muted, setMuted] = useState(false);
 
   const cleanup = useCallback(() => {
@@ -138,6 +139,7 @@ function useTTS() {
     cleanup();
     abortRef.current = false;
     setPlayBlocked(false);
+    setTtsError('');
     pendingOnEndRef.current = onEnd;
     if (muted) { onEnd?.(); return; }
     setLoading(true);
@@ -159,8 +161,15 @@ function useTTS() {
         setSpeaking(false);
         setPlayBlocked(true);
       }
-    } catch {
-      if (!abortRef.current) { setLoading(false); setSpeaking(false); onEnd?.(); }
+    } catch (err) {
+      if (!abortRef.current) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('TTS error:', msg);
+        setTtsError(msg);
+        setLoading(false);
+        setSpeaking(false);
+        onEnd?.();
+      }
     }
   }, [muted, cleanup]);
 
@@ -189,7 +198,7 @@ function useTTS() {
 
   useEffect(() => () => { abortRef.current = true; cleanup(); }, [cleanup]);
 
-  return { speak, cancel, manualPlay, speaking, loading, playBlocked, muted, toggleMute };
+  return { speak, cancel, manualPlay, speaking, loading, playBlocked, ttsError, muted, toggleMute };
 }
 
 type Phase = 'speaking' | 'ready' | 'recording' | 'transcribing' | 'done';
@@ -426,6 +435,14 @@ export default function InterviewSessionPage() {
           </div>
 
           {/* Status hint */}
+          {tts.ttsError && (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, background: 'rgba(239,68,68,.07)', border: '1px solid rgba(239,68,68,.25)', borderRadius: 12, padding: '10px 14px' }}>
+              <span style={{ color: '#ef4444', flexShrink: 0, fontSize: 15 }}>⚠</span>
+              <p style={{ margin: 0, fontSize: 12, color: '#ef4444', wordBreak: 'break-all' }}>
+                <strong>TTS error:</strong> {tts.ttsError}
+              </p>
+            </div>
+          )}
           {tts.playBlocked && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.25)', borderRadius: 12, padding: '10px 14px' }}>
               <Volume2 size={15} style={{ color: '#f59e0b', flexShrink: 0 }} />
