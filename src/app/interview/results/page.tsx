@@ -95,7 +95,7 @@ function AccordionCard({
 }
 
 export default function InterviewResultsPage() {
-  const { lang, role, education, experience, intLang, questions, answers, interviewResults, setInterviewResults } = useApp();
+  const { lang, role, education, experience, intLang, questions, answers, interviewResults, setInterviewResults, resetInterview } = useApp();
   const tr = t(lang);
   const router = useRouter();
   const calledRef = useRef(false);
@@ -217,7 +217,7 @@ export default function InterviewResultsPage() {
               : (lang === 'ar' ? 'يحتاج الأمر إلى مزيد من التدريب.' : 'More practice will sharpen your skills.')}
           </p>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <button onClick={() => router.push('/interview/setup')} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--fg)', fontFamily: 'inherit', fontWeight: 700, fontSize: 14, padding: '10px 18px', borderRadius: 11, cursor: 'pointer' }}>
+            <button onClick={() => { resetInterview(); router.push('/interview/setup'); }} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--fg)', fontFamily: 'inherit', fontWeight: 700, fontSize: 14, padding: '10px 18px', borderRadius: 11, cursor: 'pointer' }}>
               <RotateCcw size={16} />{lang === 'ar' ? 'محاولة جديدة' : 'Try Again'}
             </button>
             <button onClick={() => router.push('/modes')} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 14, padding: '10px 18px', borderRadius: 11, cursor: 'pointer' }}>

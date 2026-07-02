@@ -51,6 +51,8 @@ interface AppState {
   setInterviewResults: (r: InterviewResults | null) => void;
   presResults: PresentationResults | null;
   setPresResults: (r: PresentationResults | null) => void;
+  // Reset
+  resetInterview: () => void;
   // Presentation
   topic: string;
   setTopic: (v: string) => void;
@@ -98,6 +100,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setAnswersState(prev => { const n = [...prev]; n[index] = answer; return n; });
   };
 
+  const resetInterview = () => {
+    setQuestions([]);
+    setAnswersState(['', '', '', '', '']);
+    setInterviewResults(null);
+  };
+
   return (
     <AppContext.Provider value={{
       lang, theme, setLang, toggleTheme,
@@ -109,6 +117,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       answers, setAnswer,
       interviewResults, setInterviewResults,
       presResults, setPresResults,
+      resetInterview,
     }}>
       {children}
     </AppContext.Provider>
