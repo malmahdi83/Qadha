@@ -350,7 +350,8 @@ export default function InterviewSessionPage() {
   };
 
   const isRecorded = recorded[qIndex];
-  const canProceed = isRecorded && phase !== 'transcribing' && phase !== 'recording';
+  const allPreviousAnswered = qIndex >= 4 && recorded.slice(0, 4).every(Boolean);
+  const canProceed = (isRecorded || allPreviousAnswered) && phase !== 'transcribing' && phase !== 'recording';
   const savedTranscript = answers[qIndex] ?? '';
 
   return (
