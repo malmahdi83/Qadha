@@ -111,7 +111,7 @@ function AIAvatar({ speaking, listening, isAr }: { speaking: boolean; listening:
 }
 
 // TTS hook — backed by ElevenLabs via Supabase edge function
-function useTTS() {
+function useTTS(lang: string) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const abortRef = useRef(false);
@@ -144,7 +144,7 @@ function useTTS() {
     if (muted) { onEnd?.(); return; }
     setLoading(true);
     try {
-      const blob = await fetchTTSAudio(text);
+      const blob = await fetchTTSAudio(text, lang);
       if (abortRef.current) return;
       const url = URL.createObjectURL(blob);
       objectUrlRef.current = url;
@@ -230,7 +230,7 @@ export default function InterviewSessionPage() {
   const chunksRef = useRef<Blob[]>([]);
   const spokenIndexRef = useRef(-1);
 
-  const tts = useTTS();
+  const tts = useTTS(intLang);
 
   // Speak question when index changes
   useEffect(() => {

@@ -109,7 +109,7 @@ export async function getSessions(): Promise<SessionRow[]> {
   return (data ?? []) as SessionRow[];
 }
 
-export async function fetchTTSAudio(text: string): Promise<Blob> {
+export async function fetchTTSAudio(text: string, lang: string): Promise<Blob> {
   const token = await getAuthToken();
   const res = await fetch(`${BASE}/tts`, {
     method: 'POST',
@@ -117,7 +117,7 @@ export async function fetchTTSAudio(text: string): Promise<Blob> {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`,
     },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, lang }),
   });
   if (!res.ok) {
     throw new Error(`TTS failed: ${await res.text()}`);

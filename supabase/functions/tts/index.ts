@@ -1,8 +1,12 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const ELEVENLABS_API_KEY = Deno.env.get('ELEVENLABS_API_KEY') ?? '';
-const VOICE_ID = 'pNInz6obpgDQGcFmaJgB'; // Adam — free tier, eleven_multilingual_v2
 const MODEL_ID = 'eleven_multilingual_v2';
+
+const VOICES: Record<string, string> = {
+  ar: 'OM6r2eFtGyZvAwG8nNa8', // Custom Arabic voice
+  en: 'pNInz6obpgDQGcFmaJgB', // Adam — free tier English
+};
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -25,7 +29,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const { text } = await req.json();
+    const { text, lang } = await req.json();
 
     if (!text || typeof text !== 'string' || text.trim().length === 0) {
       return new Response(
@@ -34,8 +38,10 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    const voiceId = VOICES[lang as string] ?? VOICES['en'];
+
     const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`,
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
       {
         method: 'POST',
         headers: {
