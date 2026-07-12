@@ -4,34 +4,67 @@ const OPENROUTER_API_KEY = Deno.env.get('whisper-large-v3') ?? '';
 const MODEL = 'openai/gpt-4o-mini';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+const ALLOWED_ORIGINS = [
+  'https://qadha-gules.vercel.app',
+  'http://localhost:3000',
+];
+
+function getCorsHeaders(req: Request) {
+  const origin = req.headers.get('origin') ?? '';
+  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allowed,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Vary': 'Origin',
+  };
+}
 
 Deno.serve(async (req: Request) => {
+  const corsHeaders = getCorsHeaders(req);
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
   try {
     const body = await req.json();
-    const { mode, lang } = body;
+
+    const VALID_MODE = ['interview', 'presentation'];
+    const VALID_LANG = ['en', 'ar'];
+    const VALID_EDUCATION = ['high_school', 'bachelor', 'master', 'phd', 'other'];
+    const VALID_EXPERIENCE = ['intern', 'junior', 'mid', 'senior', 'lead', 'other'];
+
+    const mode = VALID_MODE.includes(body.mode) ? body.mode : '';
+    const lang = VALID_LANG.includes(body.lang) ? body.lang : '';
 
     if (!mode || !lang) {
       return new Response(
-        JSON.stringify({ error: 'Missing required field: mode, lang' }),
+        JSON.stringify({ error: 'Missing or invalid fields' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    // Sanitize a string: strip backticks/backslashes, truncate
+    const sanitize = (s: unknown, maxLen = 500) =>
+      typeof s === 'string' ? s.trim().slice(0, maxLen).replace(/[`\\]/g, '') : '';
 
     const isArabic = lang === 'ar';
     let systemPrompt: string;
     let userPrompt: string;
 
     if (mode === 'interview') {
-      const { questions, role, education, experience } = body;
+      const role = sanitize(body.role, 60);
+      const education = VALID_EDUCATION.includes(body.education) ? body.education : 'unspecified';
+      const experience = VALID_EXPERIENCE.includes(body.experience) ? body.experience : 'unspecified';
+      const questions = Array.isArray(body.questions)
+        ? body.questions.slice(0, 5).map((q: unknown) => {
+            const item = q as Record<string, unknown>;
+            return {
+              question: sanitize(item.question, 300),
+              answer: sanitize(item.answer, 1000),
+            };
+          })
+        : [];
 
       systemPrompt = `You are a strict, realistic interview performance analyst — like a senior hiring manager who has seen thousands of interviews. Your job is to evaluate the ACTUAL quality of what the candidate said, not what they could have said.
 
@@ -100,7 +133,8 @@ Return ONLY valid JSON, all values must reflect actual answer quality:
 {"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"pace_wpm":120,"filler_words":[{"word":"um","count":3}],"long_pauses":2,"strengths":["Genuine strength from answers, or the fixed message if none"],"improvements":["Specific improvement tied to weak answer 1","Specific improvement 2","Specific improvement 3"],"ai_feedback":"Direct, honest coaching feedback naming which answers were weak and why.","recommendations":[{"title":"Specific recommendation 1","description":"Practical advice 1"},{"title":"Specific recommendation 2","description":"Practical advice 2"},{"title":"Specific recommendation 3","description":"Practical advice 3"}],"ideal_answers":[{"question":"Actual Q1 text","ideal_answer":"STAR ideal answer for Q1"},{"question":"Actual Q2 text","ideal_answer":"Ideal answer for Q2"},{"question":"Actual Q3 text","ideal_answer":"Ideal answer for Q3"},{"question":"Actual Q4 text","ideal_answer":"Ideal answer for Q4"},{"question":"Actual Q5 text","ideal_answer":"Ideal answer for Q5"}]}`;
 
     } else if (mode === 'presentation') {
-      const { topic, transcript } = body;
+      const topic = sanitize(body.topic, 200);
+      const transcript = sanitize(body.transcript, 8000);
 
       if (!transcript || transcript.trim().length < 10) {
         return new Response(
@@ -159,7 +193,7 @@ Return ONLY valid JSON:
       const err = await response.text();
       console.error('OpenRouter error:', err);
       return new Response(
-        JSON.stringify({ error: 'AI service error', detail: err }),
+        JSON.stringify({ error: 'AI service temporarily unavailable. Please try again.' }),
         { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }

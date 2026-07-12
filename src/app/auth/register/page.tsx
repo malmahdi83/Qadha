@@ -19,8 +19,8 @@ export default function RegisterPage() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password.length < 8) {
-      setError(lang === 'ar' ? 'كلمة المرور يجب أن تكون 8 أحرف على الأقل' : 'Password must be at least 8 characters');
+    if (password.length < 12) {
+      setError(lang === 'ar' ? 'كلمة المرور يجب أن تكون 12 حرفاً على الأقل' : 'Password must be at least 12 characters');
       return;
     }
     setLoading(true);
@@ -90,10 +90,10 @@ export default function RegisterPage() {
 
           <div>
             <label style={{ display: 'block', fontWeight: 600, fontSize: 14, marginBottom: 8 }}>
-              {lang === 'ar' ? 'كلمة المرور (8 أحرف على الأقل)' : 'Password (min 8 characters)'}
+              {lang === 'ar' ? 'كلمة المرور (12 حرفاً على الأقل)' : 'Password (min 12 characters)'}
             </label>
             <div style={{ position: 'relative' }}>
-              <input type={showPw ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} required minLength={8} placeholder="••••••••"
+              <input type={showPw ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} required minLength={12} placeholder="••••••••"
                 style={{ width: '100%', border: '1.5px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'inherit', fontSize: 15, padding: '12px 44px 12px 14px', borderRadius: 11, outline: 'none', boxSizing: 'border-box' }}
                 onFocus={e => (e.target as HTMLInputElement).style.borderColor = 'var(--accent)'}
                 onBlur={e => (e.target as HTMLInputElement).style.borderColor = ''} />

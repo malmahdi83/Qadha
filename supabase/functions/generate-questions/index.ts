@@ -4,23 +4,45 @@ const OPENROUTER_API_KEY = Deno.env.get('whisper-large-v3') ?? '';
 const MODEL = 'anthropic/claude-opus-4';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+const ALLOWED_ORIGINS = [
+  'https://qadha-gules.vercel.app',
+  'http://localhost:3000',
+];
+
+function getCorsHeaders(req: Request) {
+  const origin = req.headers.get('origin') ?? '';
+  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allowed,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Vary': 'Origin',
+  };
+}
 
 Deno.serve(async (req: Request) => {
+  const corsHeaders = getCorsHeaders(req);
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
   try {
-    const { role, education, experience, lang } = await req.json();
+    const body = await req.json();
+
+    // Allowlist-validate enumerated fields; truncate free-text role to 60 chars
+    const VALID_EDUCATION = ['high_school', 'bachelor', 'master', 'phd', 'other'];
+    const VALID_EXPERIENCE = ['intern', 'junior', 'mid', 'senior', 'lead', 'other'];
+    const VALID_LANG = ['en', 'ar'];
+
+    const rawRole = typeof body.role === 'string' ? body.role.trim().slice(0, 60).replace(/[`"\\]/g, '') : '';
+    const education = VALID_EDUCATION.includes(body.education) ? body.education : '';
+    const experience = VALID_EXPERIENCE.includes(body.experience) ? body.experience : '';
+    const lang = VALID_LANG.includes(body.lang) ? body.lang : '';
+    const role = rawRole;
 
     if (!role || !education || !experience || !lang) {
       return new Response(
-        JSON.stringify({ error: 'Missing required fields' }),
+        JSON.stringify({ error: 'Missing or invalid fields' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -56,7 +78,7 @@ Deno.serve(async (req: Request) => {
       const err = await response.text();
       console.error('OpenRouter error:', err);
       return new Response(
-        JSON.stringify({ error: 'AI service error', detail: err }),
+        JSON.stringify({ error: 'AI service temporarily unavailable. Please try again.' }),
         { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
