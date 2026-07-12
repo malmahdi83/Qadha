@@ -9,6 +9,23 @@ const ALLOWED_ORIGINS = [
   'http://localhost:3000',
 ];
 
+// Rate limit: 5 analyses per user per hour
+const RATE_LIMIT = 5;
+const RATE_WINDOW_MS = 60 * 60 * 1000;
+const rateCounts = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(key: string): boolean {
+  const now = Date.now();
+  const entry = rateCounts.get(key);
+  if (!entry || now > entry.resetAt) {
+    rateCounts.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    return true;
+  }
+  if (entry.count >= RATE_LIMIT) return false;
+  entry.count++;
+  return true;
+}
+
 function getCorsHeaders(req: Request) {
   const origin = req.headers.get('origin') ?? '';
   const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
@@ -17,7 +34,20 @@ function getCorsHeaders(req: Request) {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Vary': 'Origin',
+    'X-Content-Type-Options': 'nosniff',
   };
+}
+
+function extractUserId(req: Request): string | null {
+  const auth = req.headers.get('authorization') ?? '';
+  if (!auth.startsWith('Bearer ')) return null;
+  const token = auth.slice(7);
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return payload.sub ?? null;
+  } catch {
+    return null;
+  }
 }
 
 Deno.serve(async (req: Request) => {
@@ -27,6 +57,21 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const userId = extractUserId(req);
+    if (!userId) {
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (!checkRateLimit(userId)) {
+      return new Response(
+        JSON.stringify({ error: 'Too many requests. You can analyze up to 5 sessions per hour.' }),
+        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': '3600' } }
+      );
+    }
+
     const body = await req.json();
 
     const VALID_MODE = ['interview', 'presentation'];

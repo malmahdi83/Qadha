@@ -10,17 +10,33 @@ export default function ResetPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
+  const [attempts, setAttempts] = useState(0);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
 
   const handleReset = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Client-side throttle: max 3 attempts, then 5-minute cooldown
+    if (Date.now() < cooldownUntil) {
+      const secs = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      setError(lang === 'ar' ? `يرجى الانتظار ${secs} ثانية قبل المحاولة مجدداً.` : `Please wait ${secs} seconds before trying again.`);
+      return;
+    }
+
     setLoading(true);
     setError('');
     const supabase = createClient();
     const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/auth/update-password`,
     });
-    if (err) setError(err.message);
-    else setSent(true);
+    if (err) {
+      setError(lang === 'ar' ? 'حدث خطأ. يرجى المحاولة مجدداً.' : 'Something went wrong. Please try again.');
+    } else {
+      const next = attempts + 1;
+      setAttempts(next);
+      if (next >= 3) setCooldownUntil(Date.now() + 5 * 60 * 1000);
+      setSent(true);
+    }
     setLoading(false);
   };
 

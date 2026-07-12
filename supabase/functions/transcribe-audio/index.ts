@@ -8,6 +8,23 @@ const ALLOWED_ORIGINS = [
   'http://localhost:3000',
 ];
 
+// Rate limit: 20 transcriptions per user per 10 minutes
+const RATE_LIMIT = 20;
+const RATE_WINDOW_MS = 10 * 60 * 1000;
+const rateCounts = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(key: string): boolean {
+  const now = Date.now();
+  const entry = rateCounts.get(key);
+  if (!entry || now > entry.resetAt) {
+    rateCounts.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    return true;
+  }
+  if (entry.count >= RATE_LIMIT) return false;
+  entry.count++;
+  return true;
+}
+
 function getCorsHeaders(req: Request) {
   const origin = req.headers.get('origin') ?? '';
   const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
@@ -16,7 +33,21 @@ function getCorsHeaders(req: Request) {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Vary': 'Origin',
+    'X-Content-Type-Options': 'nosniff',
   };
+}
+
+function extractUserId(req: Request): string | null {
+  const auth = req.headers.get('authorization') ?? '';
+  if (!auth.startsWith('Bearer ')) return null;
+  const token = auth.slice(7);
+  // JWT payload is the second base64url segment
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return payload.sub ?? null;
+  } catch {
+    return null;
+  }
 }
 
 Deno.serve(async (req: Request) => {
@@ -26,16 +57,34 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    // Require a valid Bearer token
+    const userId = extractUserId(req);
+    if (!userId) {
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Per-user rate limiting
+    if (!checkRateLimit(userId)) {
+      return new Response(
+        JSON.stringify({ error: 'Too many requests. Please wait before transcribing again.' }),
+        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': '60' } }
+      );
+    }
+
     if (!GROQ_API_KEY) {
       return new Response(
-        JSON.stringify({ error: 'GROQ_API_KEY secret is not configured' }),
+        JSON.stringify({ error: 'Transcription service is not configured.' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     const form = await req.formData();
     const audio = form.get('audio') as File | null;
-    const lang = (form.get('lang') as string) ?? 'en';
+    const rawLang = (form.get('lang') as string) ?? 'en';
+    const lang = rawLang === 'ar' ? 'ar' : 'en';
 
     if (!audio) {
       return new Response(
@@ -54,7 +103,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Groq Whisper limit is 25 MB; reject early with a clear message
+    // Groq Whisper limit is 25 MB
     const MAX_BYTES = 25 * 1024 * 1024;
     if (audio.size > MAX_BYTES) {
       return new Response(
@@ -66,7 +115,7 @@ Deno.serve(async (req: Request) => {
     const outForm = new FormData();
     outForm.append('file', audio, audio.name || 'recording.webm');
     outForm.append('model', 'whisper-large-v3');
-    outForm.append('language', lang === 'ar' ? 'ar' : 'en');
+    outForm.append('language', lang);
     outForm.append('response_format', 'json');
 
     const response = await fetch(GROQ_URL, {
