@@ -15,6 +15,13 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    if (!GROQ_API_KEY) {
+      return new Response(
+        JSON.stringify({ error: 'GROQ_API_KEY secret is not configured' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const form = await req.formData();
     const audio = form.get('audio') as File | null;
     const lang = (form.get('lang') as string) ?? 'en';
@@ -23,6 +30,15 @@ Deno.serve(async (req: Request) => {
       return new Response(
         JSON.stringify({ error: 'Missing audio file' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Groq Whisper limit is 25 MB; reject early with a clear message
+    const MAX_BYTES = 25 * 1024 * 1024;
+    if (audio.size > MAX_BYTES) {
+      return new Response(
+        JSON.stringify({ error: 'Audio file too large. Maximum recording size is 25 MB.' }),
+        { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 

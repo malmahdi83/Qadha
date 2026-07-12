@@ -114,7 +114,7 @@ function AIAvatar({ speaking, listening, isAr }: { speaking: boolean; listening:
 function useTTS(lang: string) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
-  const abortRef = useRef(false);
+  const genRef = useRef(0);
   const pendingOnEndRef = useRef<(() => void) | undefined>(undefined);
   const [speaking, setSpeaking] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -135,9 +135,8 @@ function useTTS(lang: string) {
   }, []);
 
   const speak = useCallback(async (text: string, onEnd?: () => void) => {
-    abortRef.current = true;
+    const gen = ++genRef.current;
     cleanup();
-    abortRef.current = false;
     setPlayBlocked(false);
     setTtsError('');
     pendingOnEndRef.current = onEnd;
@@ -145,7 +144,7 @@ function useTTS(lang: string) {
     setLoading(true);
     try {
       const blob = await fetchTTSAudio(text, lang);
-      if (abortRef.current) return;
+      if (gen !== genRef.current) return; // superseded by a newer speak() call
       const url = URL.createObjectURL(blob);
       objectUrlRef.current = url;
       const audio = new Audio(url);
@@ -162,7 +161,7 @@ function useTTS(lang: string) {
         setPlayBlocked(true);
       }
     } catch (err) {
-      if (!abortRef.current) {
+      if (gen === genRef.current) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('TTS error:', msg);
         setTtsError(msg);
@@ -184,7 +183,7 @@ function useTTS(lang: string) {
   }, [cleanup]);
 
   const cancel = useCallback(() => {
-    abortRef.current = true;
+    genRef.current++; // invalidate any in-flight fetch
     cleanup();
     setSpeaking(false);
     setLoading(false);
@@ -196,7 +195,7 @@ function useTTS(lang: string) {
     setMuted(m => !m);
   }, [muted, cancel]);
 
-  useEffect(() => () => { abortRef.current = true; cleanup(); }, [cleanup]);
+  useEffect(() => () => { genRef.current++; cleanup(); }, [cleanup]);
 
   return { speak, cancel, manualPlay, speaking, loading, playBlocked, ttsError, muted, toggleMute };
 }
@@ -229,6 +228,7 @@ export default function InterviewSessionPage() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const spokenIndexRef = useRef(-1);
+  const mountedRef = useRef(true);
 
   const tts = useTTS(intLang);
 
@@ -245,6 +245,7 @@ export default function InterviewSessionPage() {
   const enableCam = useCallback(async () => {
     try {
       const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      if (!mountedRef.current) { s.getTracks().forEach(t => t.stop()); return; }
       camStreamRef.current = s;
       setCamOn(true); setCamError(false);
       if (videoRef.current) videoRef.current.srcObject = s;
@@ -259,8 +260,10 @@ export default function InterviewSessionPage() {
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     enableCam();
     return () => {
+      mountedRef.current = false;
       stopCam();
       tts.cancel();
       if (timerRef.current) clearInterval(timerRef.current);
@@ -276,6 +279,7 @@ export default function InterviewSessionPage() {
     let audioStream: MediaStream;
     try {
       audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!mountedRef.current) { audioStream.getTracks().forEach(t => t.stop()); return; }
       audioStreamRef.current?.getTracks().forEach(t => t.stop());
       audioStreamRef.current = audioStream;
     } catch {
@@ -288,18 +292,18 @@ export default function InterviewSessionPage() {
     const recorder = new MediaRecorder(audioStream, mimeType ? { mimeType } : undefined);
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
 
+    const capturedIndex = qIndex; // freeze index at recording start; user may advance before onstop fires
     recorder.onstop = async () => {
       const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
-      setPhase('transcribing');
+      setPhase(p => p === 'recording' || p === 'transcribing' ? 'transcribing' : p);
       try {
         const transcript = await transcribeAudio(blob, intLang);
-        setAnswer(qIndex, transcript.trim());
-        setRecorded(r => { const n = [...r]; n[qIndex] = true; return n; });
-        setPhase('done');
+        setAnswer(capturedIndex, transcript.trim());
+        setRecorded(r => { const n = [...r]; n[capturedIndex] = true; return n; });
+        setQIndex(i => { if (i === capturedIndex) setPhase('done'); return i; });
       } catch (err) {
         console.error('Transcription error:', err);
-        setTranscriptError(isAr ? 'تعذّر تحويل الصوت إلى نص. حاول مجددًا.' : 'Could not transcribe audio. Please try again.');
-        setPhase('ready');
+        setQIndex(i => { if (i === capturedIndex) { setTranscriptError(isAr ? 'تعذّر تحويل الصوت إلى نص. حاول مجددًا.' : 'Could not transcribe audio. Please try again.'); setPhase('ready'); } return i; });
       }
     };
 
@@ -339,7 +343,7 @@ export default function InterviewSessionPage() {
   };
 
   const next = () => {
-    if (phase === 'recording') stopRecording();
+    if (phase === 'recording' || phase === 'transcribing') stopRecording();
     tts.cancel();
     if (qIndex >= 4) { stopCam(); router.push('/interview/results'); return; }
     spokenIndexRef.current = -1;
