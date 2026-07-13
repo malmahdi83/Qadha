@@ -1,7 +1,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const GROQ_API_KEY = Deno.env.get('GROQ_API_KEY') ?? '';
 const GROQ_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
 
 const ALLOWED_ORIGINS = [
   'https://qadha-gules.vercel.app',
@@ -37,16 +40,19 @@ function getCorsHeaders(req: Request) {
   };
 }
 
-function extractUserId(req: Request): string | null {
+async function extractUserId(req: Request): Promise<string | null> {
   const auth = req.headers.get('authorization') ?? '';
+  console.log('[auth] header present:', !!auth, '| starts with Bearer:', auth.startsWith('Bearer '));
   if (!auth.startsWith('Bearer ')) return null;
-  const token = auth.slice(7);
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-    return payload.sub ?? null;
-  } catch {
-    return null;
-  }
+
+  // Use Supabase auth.getUser() — reliable, no manual JWT decoding
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: auth } },
+    auth: { persistSession: false },
+  });
+  const { data: { user }, error } = await supabase.auth.getUser();
+  console.log('[auth] getUser result — user:', user?.id ?? 'null', '| error:', error?.message ?? 'none');
+  return user?.id ?? null;
 }
 
 // Minimum gap in seconds between transcript segments to count as a long pause
@@ -86,7 +92,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const userId = extractUserId(req);
+    const userId = await extractUserId(req);
     if (!userId) {
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
