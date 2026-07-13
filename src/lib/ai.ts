@@ -23,7 +23,7 @@ async function callEdge<T>(name: string, body: Record<string, unknown>): Promise
   return res.json() as Promise<T>;
 }
 
-async function getAuthToken(): Promise<string> {
+export async function getAuthToken(): Promise<string> {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
   return session?.access_token ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -173,9 +173,10 @@ export async function fetchTTSAudio(text: string, lang: string): Promise<Blob> {
 
 export async function transcribeAudio(
   blob: Blob,
-  lang: string
+  lang: string,
+  preToken?: string
 ): Promise<{ transcript: string } & PauseMetrics> {
-  const token = await getAuthToken();
+  const token = preToken ?? await getAuthToken();
   const form = new FormData();
   form.append('audio', blob, 'recording.webm');
   form.append('lang', lang);

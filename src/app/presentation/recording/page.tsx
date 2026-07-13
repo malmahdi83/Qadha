@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { Presentation, Play, Square, Sparkles, Loader2, Mic } from 'lucide-react';
 import { useApp } from '@/lib/context';
 import { t } from '@/lib/i18n';
-import { transcribeAudio, countFillerWords } from '@/lib/ai';
+import { transcribeAudio, countFillerWords, getAuthToken } from '@/lib/ai';
 
 function fmt(s: number) {
   const m = Math.floor(s / 60), ss = s % 60;
@@ -31,7 +31,6 @@ export default function PresentationRecordingPage() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const recordingStartTimeRef = useRef(0);
 
   const enableCam = useCallback(async () => {
     try {
@@ -65,6 +64,9 @@ export default function PresentationRecordingPage() {
     setTranscript('');
     chunksRef.current = [];
 
+    // Capture auth token NOW while the session is guaranteed fresh (user just tapped Record)
+    const authToken = await getAuthToken();
+
     let audioStream: MediaStream;
     try {
       audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -81,14 +83,14 @@ export default function PresentationRecordingPage() {
     const recorder = new MediaRecorder(audioStream, mimeType ? { mimeType } : undefined);
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
 
-    const capturedStartTime = recordingStartTimeRef.current;
+    const recordingStart = Date.now(); // capture start time here, not from a ref set later
     recorder.onstop = async () => {
-      const durationSeconds = Math.max(0, (Date.now() - capturedStartTime) / 1000);
+      const durationSeconds = Math.max(0, (Date.now() - recordingStart) / 1000);
       const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
       setTranscribing(true);
       try {
         const { transcript: text, pauseCount, avgPauseDuration, longestPauseDuration } =
-          await transcribeAudio(blob, intLang);
+          await transcribeAudio(blob, intLang, authToken);
         const trimmed = text.trim();
         const wordCount = trimmed ? trimmed.split(/\s+/).filter(Boolean).length : 0;
         const wpm = durationSeconds > 2 && wordCount > 0
@@ -118,7 +120,6 @@ export default function PresentationRecordingPage() {
     };
 
     recorderRef.current = recorder;
-    recordingStartTimeRef.current = Date.now();
     recorder.start();
     setRecording(true);
     setElapsed(0);
