@@ -33,8 +33,8 @@ const securityHeaders = [
       `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.elevenlabs.io`,
       // Next.js requires unsafe-inline for styles; no external style sheets
       "style-src 'self' 'unsafe-inline'",
-      // No inline scripts — Next.js uses script chunks from same origin
-      "script-src 'self' 'unsafe-eval'",
+      // unsafe-inline required — Next.js injects inline scripts for hydration
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       // Camera/mic for interview recording
       "media-src 'self' blob:",
       // Avatar emoji rendered as text; no external images needed
