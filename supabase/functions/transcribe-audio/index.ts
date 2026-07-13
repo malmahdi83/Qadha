@@ -148,6 +148,7 @@ Deno.serve(async (req: Request) => {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${GROQ_API_KEY}` },
       body: outForm,
+      signal: AbortSignal.timeout(30000), // 30s — Groq is typically <5s; fail fast if hung
     });
 
     if (!response.ok) {
@@ -171,10 +172,13 @@ Deno.serve(async (req: Request) => {
     );
 
   } catch (err) {
-    console.error('Unexpected error:', err);
+    const isTimeout = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
+    console.error(isTimeout ? 'Groq timeout' : 'Unexpected error:', err);
     return new Response(
-      JSON.stringify({ error: 'Internal server error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      JSON.stringify({ error: isTimeout
+        ? 'Transcription timed out. Please try again with a shorter recording.'
+        : 'Internal server error' }),
+      { status: isTimeout ? 504 : 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });
