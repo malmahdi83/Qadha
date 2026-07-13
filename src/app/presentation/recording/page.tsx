@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { Presentation, Play, Square, Sparkles, Loader2, Mic } from 'lucide-react';
 import { useApp } from '@/lib/context';
 import { t } from '@/lib/i18n';
-import { transcribeAudio } from '@/lib/ai';
+import { transcribeAudio, countFillerWords } from '@/lib/ai';
 
 function fmt(s: number) {
   const m = Math.floor(s / 60), ss = s % 60;
@@ -12,7 +12,7 @@ function fmt(s: number) {
 }
 
 export default function PresentationRecordingPage() {
-  const { lang, intLang, topic, setPresResults, setPresTranscript } = useApp();
+  const { lang, intLang, topic, setPresResults, setPresTranscript, setPresSpeechMetrics } = useApp();
   const tr = t(lang);
   const router = useRouter();
 
@@ -31,6 +31,7 @@ export default function PresentationRecordingPage() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const recordingStartTimeRef = useRef(0);
 
   const enableCam = useCallback(async () => {
     try {
@@ -64,7 +65,6 @@ export default function PresentationRecordingPage() {
     setTranscript('');
     chunksRef.current = [];
 
-    // Always get a dedicated audio stream for recording
     let audioStream: MediaStream;
     try {
       audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -81,13 +81,31 @@ export default function PresentationRecordingPage() {
     const recorder = new MediaRecorder(audioStream, mimeType ? { mimeType } : undefined);
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
 
+    const capturedStartTime = recordingStartTimeRef.current;
     recorder.onstop = async () => {
+      const durationSeconds = Math.max(0, (Date.now() - capturedStartTime) / 1000);
       const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
       setTranscribing(true);
       try {
-        const text = await transcribeAudio(blob, intLang);
-        setTranscript(text.trim());
-        setPresTranscript(text.trim());
+        const { transcript: text, pauseCount, avgPauseDuration, longestPauseDuration } =
+          await transcribeAudio(blob, intLang);
+        const trimmed = text.trim();
+        const wordCount = trimmed ? trimmed.split(/\s+/).filter(Boolean).length : 0;
+        const wpm = durationSeconds > 2 && wordCount > 0
+          ? Math.round(wordCount / (durationSeconds / 60))
+          : 0;
+        const fillerWords = countFillerWords(trimmed, intLang);
+        setPresSpeechMetrics({
+          durationSeconds: parseFloat(durationSeconds.toFixed(1)),
+          wordCount,
+          wpm,
+          fillerWords,
+          pauseCount,
+          avgPauseDuration,
+          longestPauseDuration,
+        });
+        setTranscript(trimmed);
+        setPresTranscript(trimmed);
         setDone(true);
       } catch (err) {
         console.error('Transcription error:', err);
@@ -100,6 +118,7 @@ export default function PresentationRecordingPage() {
     };
 
     recorderRef.current = recorder;
+    recordingStartTimeRef.current = Date.now();
     recorder.start();
     setRecording(true);
     setElapsed(0);
@@ -122,6 +141,7 @@ export default function PresentationRecordingPage() {
     setDone(false);
     setTranscript('');
     setPresTranscript('');
+    setPresSpeechMetrics(null);
     setError('');
   };
 
@@ -153,7 +173,6 @@ export default function PresentationRecordingPage() {
           </div>
         )}
 
-        {/* Overlays */}
         {recording && (
           <div style={{ position: 'absolute', top: 14, left: 14, display: 'flex', gap: 8 }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(239,68,68,.92)', color: '#fff', fontSize: 12, fontWeight: 700, padding: '5px 10px', borderRadius: 8 }}>

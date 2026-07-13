@@ -41,13 +41,42 @@ function extractUserId(req: Request): string | null {
   const auth = req.headers.get('authorization') ?? '';
   if (!auth.startsWith('Bearer ')) return null;
   const token = auth.slice(7);
-  // JWT payload is the second base64url segment
   try {
     const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
     return payload.sub ?? null;
   } catch {
     return null;
   }
+}
+
+// Minimum gap in seconds between transcript segments to count as a long pause
+const PAUSE_THRESHOLD_SECS = 2.0;
+
+interface Segment {
+  start: number;
+  end: number;
+}
+
+function computePauseMetrics(segments: Segment[]): {
+  pauseCount: number;
+  avgPauseDuration: number;
+  longestPauseDuration: number;
+} {
+  const longPauses: number[] = [];
+  for (let i = 1; i < segments.length; i++) {
+    const gap = segments[i].start - segments[i - 1].end;
+    if (gap >= PAUSE_THRESHOLD_SECS) {
+      longPauses.push(parseFloat(gap.toFixed(2)));
+    }
+  }
+  const pauseCount = longPauses.length;
+  const avgPauseDuration = pauseCount > 0
+    ? parseFloat((longPauses.reduce((a, b) => a + b, 0) / pauseCount).toFixed(2))
+    : 0;
+  const longestPauseDuration = pauseCount > 0
+    ? parseFloat(Math.max(...longPauses).toFixed(2))
+    : 0;
+  return { pauseCount, avgPauseDuration, longestPauseDuration };
 }
 
 Deno.serve(async (req: Request) => {
@@ -57,7 +86,6 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // Require a valid Bearer token
     const userId = extractUserId(req);
     if (!userId) {
       return new Response(
@@ -66,7 +94,6 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Per-user rate limiting
     if (!checkRateLimit(userId)) {
       return new Response(
         JSON.stringify({ error: 'Too many requests. Please wait before transcribing again.' }),
@@ -93,7 +120,6 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Validate MIME type — only accept audio formats Groq supports
     const ALLOWED_MIME = ['audio/webm', 'audio/ogg', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/flac', 'audio/x-m4a'];
     const mimeBase = (audio.type || '').split(';')[0].trim().toLowerCase();
     if (mimeBase && !ALLOWED_MIME.some(m => mimeBase.startsWith(m.split('/')[0]) && mimeBase.includes('audio'))) {
@@ -103,7 +129,6 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Groq Whisper limit is 25 MB
     const MAX_BYTES = 25 * 1024 * 1024;
     if (audio.size > MAX_BYTES) {
       return new Response(
@@ -116,7 +141,8 @@ Deno.serve(async (req: Request) => {
     outForm.append('file', audio, audio.name || 'recording.webm');
     outForm.append('model', 'whisper-large-v3');
     outForm.append('language', lang);
-    outForm.append('response_format', 'json');
+    // verbose_json returns segment-level timestamps for real pause detection
+    outForm.append('response_format', 'verbose_json');
 
     const response = await fetch(GROQ_URL, {
       method: 'POST',
@@ -134,10 +160,13 @@ Deno.serve(async (req: Request) => {
     }
 
     const data = await response.json();
-    const transcript = data.text ?? '';
+    const transcript = (data.text ?? '').trim();
+    const segments: Segment[] = Array.isArray(data.segments) ? data.segments : [];
+
+    const { pauseCount, avgPauseDuration, longestPauseDuration } = computePauseMetrics(segments);
 
     return new Response(
-      JSON.stringify({ transcript }),
+      JSON.stringify({ transcript, pauseCount, avgPauseDuration, longestPauseDuration }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 

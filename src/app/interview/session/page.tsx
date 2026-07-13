@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { Mic, Square, RotateCcw, ArrowRight, Loader2, Volume2, VolumeX, RefreshCw } from 'lucide-react';
 import { useApp } from '@/lib/context';
 import { t } from '@/lib/i18n';
-import { transcribeAudio, fetchTTSAudio } from '@/lib/ai';
+import { transcribeAudio, fetchTTSAudio, countFillerWords } from '@/lib/ai';
 
 function fmt(s: number) {
   const m = Math.floor(s / 60), ss = s % 60;
@@ -203,7 +203,7 @@ function useTTS(lang: string) {
 type Phase = 'speaking' | 'ready' | 'recording' | 'transcribing' | 'done';
 
 export default function InterviewSessionPage() {
-  const { lang, intLang, questions, answers, setAnswer } = useApp();
+  const { lang, intLang, questions, answers, setAnswer, setAnswerMetrics } = useApp();
   const tr = t(lang);
   const router = useRouter();
   const dir = lang === 'ar' ? 'rtl' : 'ltr';
@@ -227,6 +227,7 @@ export default function InterviewSessionPage() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const recordingStartTimeRef = useRef(0);
   const spokenIndexRef = useRef(-1);
   const mountedRef = useRef(true);
 
@@ -293,12 +294,31 @@ export default function InterviewSessionPage() {
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
 
     const capturedIndex = qIndex; // freeze index at recording start; user may advance before onstop fires
+    const capturedStartTime = recordingStartTimeRef.current;
     recorder.onstop = async () => {
+      const durationSeconds = Math.max(0, (Date.now() - capturedStartTime) / 1000);
       const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
       setPhase(p => p === 'recording' || p === 'transcribing' ? 'transcribing' : p);
       try {
-        const transcript = await transcribeAudio(blob, intLang);
-        setAnswer(capturedIndex, transcript.trim());
+        const { transcript, pauseCount, avgPauseDuration, longestPauseDuration } =
+          await transcribeAudio(blob, intLang);
+        const trimmed = transcript.trim();
+        const wordCount = trimmed ? trimmed.split(/\s+/).filter(Boolean).length : 0;
+        // Only compute WPM when duration and transcript are meaningful
+        const wpm = durationSeconds > 2 && wordCount > 0
+          ? Math.round(wordCount / (durationSeconds / 60))
+          : 0;
+        const fillerWords = countFillerWords(trimmed, intLang);
+        setAnswerMetrics(capturedIndex, {
+          durationSeconds: parseFloat(durationSeconds.toFixed(1)),
+          wordCount,
+          wpm,
+          fillerWords,
+          pauseCount,
+          avgPauseDuration,
+          longestPauseDuration,
+        });
+        setAnswer(capturedIndex, trimmed);
         setRecorded(r => { const n = [...r]; n[capturedIndex] = true; return n; });
         setQIndex(i => { if (i === capturedIndex) setPhase('done'); return i; });
       } catch (err) {
@@ -308,6 +328,7 @@ export default function InterviewSessionPage() {
     };
 
     recorderRef.current = recorder;
+    recordingStartTimeRef.current = Date.now();
     recorder.start();
     setPhase('recording');
     setElapsed(0);

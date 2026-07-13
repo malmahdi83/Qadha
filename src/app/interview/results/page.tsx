@@ -2,9 +2,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, RotateCcw, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
-import { useApp, InterviewResults } from '@/lib/context';
+import { useApp, InterviewResults, QuestionMetrics } from '@/lib/context';
 import { t } from '@/lib/i18n';
-import { analyzePerformance, saveSession } from '@/lib/ai';
+import { analyzePerformance, saveSession, SpeechSummary } from '@/lib/ai';
 
 const ROLE_LABELS: Record<string, string> = {
   dev: 'Software Developer', pm: 'Project Manager', acc: 'Accountant',
@@ -16,6 +16,43 @@ const EDU_LABELS: Record<string, string> = {
 const EXP_LABELS: Record<string, string> = {
   fresh: 'Fresh Graduate', junior: 'Junior', mid: 'Mid-Level', senior: 'Senior',
 };
+
+// Aggregate per-question metrics into a single summary for the AI and for display
+function aggregateSpeechMetrics(
+  metrics: (QuestionMetrics | null)[],
+  answeredIndices: number[]
+): SpeechSummary | null {
+  const valid = answeredIndices
+    .map(i => metrics[i])
+    .filter((m): m is QuestionMetrics => m != null && m.wpm > 0);
+
+  if (valid.length === 0) return null;
+
+  const avgWpm = Math.round(valid.reduce((s, m) => s + m.wpm, 0) / valid.length);
+  const totalPauseCount = valid.reduce((s, m) => s + m.pauseCount, 0);
+  const avgPauseDuration =
+    totalPauseCount > 0
+      ? parseFloat(
+          (valid.reduce((s, m) => s + m.avgPauseDuration * m.pauseCount, 0) / totalPauseCount).toFixed(2)
+        )
+      : 0;
+  const longestPauseDuration = parseFloat(
+    Math.max(0, ...valid.map(m => m.longestPauseDuration)).toFixed(2)
+  );
+
+  // Merge filler counts across questions
+  const fillerMap: Record<string, number> = {};
+  for (const m of valid) {
+    for (const f of m.fillerWords) {
+      fillerMap[f.word] = (fillerMap[f.word] ?? 0) + f.count;
+    }
+  }
+  const fillerWords = Object.entries(fillerMap)
+    .map(([word, count]) => ({ word, count }))
+    .sort((a, b) => b.count - a.count);
+
+  return { avgWpm, fillerWords, pauseCount: totalPauseCount, avgPauseDuration, longestPauseDuration };
+}
 
 function ScoreGauge({ score }: { score: number }) {
   const r = 70, C = 2 * Math.PI * r;
@@ -36,11 +73,21 @@ function ScoreGauge({ score }: { score: number }) {
   );
 }
 
-function Bar({ label, value, max = 100, color = 'var(--accent)' }: { label: string; value: number; max?: number; color?: string }) {
+function Bar({ label, value, max = 100, color = 'var(--accent)', tooltip }: {
+  label: string; value: number; max?: number; color?: string; tooltip?: string;
+}) {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-        <span style={{ fontSize: 14, fontWeight: 600 }}>{label}</span>
+        <span style={{ fontSize: 14, fontWeight: 600 }}>
+          {label}
+          {tooltip && (
+            <span
+              title={tooltip}
+              style={{ marginLeft: 5, cursor: 'help', color: 'var(--fg3)', fontSize: 13 }}
+            >ⓘ</span>
+          )}
+        </span>
         <span style={{ fontSize: 14, fontWeight: 700, color }}>{value}<span style={{ fontSize: 12, color: 'var(--fg3)' }}>/{max}</span></span>
       </div>
       <div style={{ height: 8, borderRadius: 4, background: 'var(--surface2)', overflow: 'hidden' }}>
@@ -67,7 +114,6 @@ function AccordionCard({
 
       {open && (
         <div style={{ padding: '0 22px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {/* User answer */}
           <div style={{ background: 'rgba(2,132,199,.07)', border: '1.5px solid rgba(2,132,199,.2)', borderRadius: 12, padding: '14px 16px' }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' }} />
@@ -78,7 +124,6 @@ function AccordionCard({
             </p>
           </div>
 
-          {/* Ideal answer */}
           <div style={{ background: 'rgba(16,185,129,.07)', border: '1.5px solid rgba(16,185,129,.25)', borderRadius: 12, padding: '14px 16px' }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: '#10b981', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#10b981' }} />
@@ -95,13 +140,18 @@ function AccordionCard({
 }
 
 export default function InterviewResultsPage() {
-  const { lang, role, education, experience, intLang, questions, answers, interviewResults, setInterviewResults, resetInterview } = useApp();
+  const { lang, role, education, experience, intLang, questions, answers, answerMetrics,
+    interviewResults, setInterviewResults, resetInterview } = useApp();
   const tr = t(lang);
   const router = useRouter();
   const calledRef = useRef(false);
   const savedRef = useRef(false);
   const [loading, setLoading] = useState(!interviewResults);
   const [error, setError] = useState('');
+
+  // Pre-compute aggregated speech metrics once
+  const answeredIndices = answers.map((a, i) => a ? i : -1).filter(i => i >= 0);
+  const speechSummary = aggregateSpeechMetrics(answerMetrics, answeredIndices);
 
   useEffect(() => {
     if (interviewResults || calledRef.current) { setLoading(false); return; }
@@ -123,6 +173,13 @@ export default function InterviewResultsPage() {
       education: EDU_LABELS[education] ?? education,
       experience: EXP_LABELS[experience] ?? experience,
       questions: qaPairs,
+      speechMetrics: speechSummary ?? {
+        avgWpm: 0,
+        fillerWords: [],
+        pauseCount: 0,
+        avgPauseDuration: 0,
+        longestPauseDuration: 0,
+      },
     })
       .then(res => { setInterviewResults(res); setLoading(false); })
       .catch(err => {
@@ -154,9 +211,10 @@ export default function InterviewResultsPage() {
       score_communication: interviewResults.communication,
       score_confidence: interviewResults.confidence,
       score_quality: interviewResults.answer_quality,
-      pace_wpm: interviewResults.pace_wpm,
-      filler_words: interviewResults.filler_words,
-      long_pauses: interviewResults.long_pauses,
+      // Store real code-computed values in DB
+      pace_wpm: speechSummary?.avgWpm ?? undefined,
+      filler_words: speechSummary?.fillerWords ?? [],
+      long_pauses: speechSummary?.pauseCount ?? undefined,
       ai_feedback: interviewResults.ai_feedback,
       strengths: interviewResults.strengths,
       improvements: interviewResults.improvements,
@@ -196,6 +254,11 @@ export default function InterviewResultsPage() {
   }
 
   const r2 = interviewResults;
+  const isAr = lang === 'ar';
+
+  const confidenceTooltip = isAr
+    ? 'تقدير مبني على: وتيرة الكلام، كثافة كلمات الحشو، تكرار التوقفات، واكتمال الإجابات. ليس قياسًا نفسيًا أو صوتيًا مباشرًا.'
+    : 'Estimated from: speaking pace, filler word density, pause frequency, and answer completeness. Not a direct acoustic or psychological measurement.';
 
   return (
     <section style={{ maxWidth: 1100, margin: '0 auto', padding: 'clamp(20px,3.5vw,44px) clamp(16px,4vw,40px)' }}>
@@ -204,24 +267,24 @@ export default function InterviewResultsPage() {
         <ScoreGauge score={r2.overall_score} />
         <div style={{ flex: 1, minWidth: 220 }}>
           <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.08em', color: 'var(--accent)', textTransform: 'uppercase', marginBottom: 10 }}>
-            {lang === 'ar' ? 'نتيجة المقابلة' : 'Interview Score'}
+            {isAr ? 'نتيجة المقابلة' : 'Interview Score'}
           </div>
           <h1 style={{ margin: '0 0 8px', fontSize: 'clamp(22px,3vw,30px)', fontWeight: 800, letterSpacing: '-.02em' }}>
-            {lang === 'ar' ? 'تقرير الأداء' : 'Performance Report'}
+            {isAr ? 'تقرير الأداء' : 'Performance Report'}
           </h1>
           <p style={{ margin: '0 0 20px', color: 'var(--fg2)', fontSize: 15 }}>
             {r2.overall_score >= 80
-              ? (lang === 'ar' ? 'أداء ممتاز! أنت مستعد للمقابلة.' : 'Excellent performance! You\'re interview-ready.')
+              ? (isAr ? 'أداء ممتاز! أنت مستعد للمقابلة.' : 'Excellent performance! You\'re interview-ready.')
               : r2.overall_score >= 60
-              ? (lang === 'ar' ? 'أداء جيد مع مجال للتحسين.' : 'Good performance with room to improve.')
-              : (lang === 'ar' ? 'يحتاج الأمر إلى مزيد من التدريب.' : 'More practice will sharpen your skills.')}
+              ? (isAr ? 'أداء جيد مع مجال للتحسين.' : 'Good performance with room to improve.')
+              : (isAr ? 'يحتاج الأمر إلى مزيد من التدريب.' : 'More practice will sharpen your skills.')}
           </p>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <button onClick={() => { resetInterview(); router.push('/interview/setup'); }} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--fg)', fontFamily: 'inherit', fontWeight: 700, fontSize: 14, padding: '10px 18px', borderRadius: 11, cursor: 'pointer' }}>
-              <RotateCcw size={16} />{lang === 'ar' ? 'محاولة جديدة' : 'Try Again'}
+              <RotateCcw size={16} />{isAr ? 'محاولة جديدة' : 'Try Again'}
             </button>
             <button onClick={() => router.push('/modes')} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 14, padding: '10px 18px', borderRadius: 11, cursor: 'pointer' }}>
-              {lang === 'ar' ? 'اختر وضعًا آخر' : 'Try Another Mode'}<ArrowRight size={16} />
+              {isAr ? 'اختر وضعًا آخر' : 'Try Another Mode'}<ArrowRight size={16} />
             </button>
           </div>
         </div>
@@ -230,27 +293,48 @@ export default function InterviewResultsPage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(320px,1fr))', gap: 20, marginBottom: 20 }}>
         {/* Sub-scores */}
         <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, padding: 28, boxShadow: 'var(--shadow)', display: 'flex', flexDirection: 'column', gap: 20 }}>
-          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>{lang === 'ar' ? 'تفاصيل الأداء' : 'Performance Breakdown'}</h2>
-          <Bar label={lang === 'ar' ? 'التواصل' : 'Communication'} value={r2.communication} color="var(--accent)" />
-          <Bar label={lang === 'ar' ? 'الثقة' : 'Confidence'} value={r2.confidence} color="#8b5cf6" />
-          <Bar label={lang === 'ar' ? 'جودة الإجابة' : 'Answer Quality'} value={r2.answer_quality} color="#10b981" />
-          <div style={{ paddingTop: 8, borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 14, color: 'var(--fg2)' }}>{lang === 'ar' ? 'وتيرة الكلام' : 'Speaking Pace'}</span>
-            <span style={{ fontWeight: 700, fontSize: 18 }}>{r2.pace_wpm} <span style={{ fontSize: 12, color: 'var(--fg3)', fontWeight: 500 }}>WPM</span></span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 14, color: 'var(--fg2)' }}>{lang === 'ar' ? 'توقفات طويلة' : 'Long Pauses'}</span>
-            <span style={{ fontWeight: 700, fontSize: 18 }}>{r2.long_pauses}</span>
+          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>{isAr ? 'تفاصيل الأداء' : 'Performance Breakdown'}</h2>
+          <Bar label={isAr ? 'التواصل' : 'Communication'} value={r2.communication} color="var(--accent)" />
+          <Bar
+            label={isAr ? 'تقدير الثقة في الإلقاء' : 'Delivery Confidence Estimate'}
+            value={r2.confidence}
+            color="#8b5cf6"
+            tooltip={confidenceTooltip}
+          />
+          <Bar label={isAr ? 'جودة الإجابة' : 'Answer Quality'} value={r2.answer_quality} color="#10b981" />
+
+          {/* Real speech metrics from recordings */}
+          <div style={{ paddingTop: 8, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 14, color: 'var(--fg2)' }}>{isAr ? 'وتيرة الكلام' : 'Speaking Pace'}</span>
+              {speechSummary && speechSummary.avgWpm > 0
+                ? <span style={{ fontWeight: 700, fontSize: 18 }}>{speechSummary.avgWpm} <span style={{ fontSize: 12, color: 'var(--fg3)', fontWeight: 500 }}>WPM</span></span>
+                : <span style={{ fontSize: 14, color: 'var(--fg3)', fontStyle: 'italic' }}>{isAr ? 'غير متاح' : 'Not available'}</span>
+              }
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 14, color: 'var(--fg2)' }}>{isAr ? 'توقفات طويلة (>٢ ث)' : 'Long Pauses (>2 s)'}</span>
+              {speechSummary
+                ? <span style={{ fontWeight: 700, fontSize: 18 }}>{speechSummary.pauseCount}</span>
+                : <span style={{ fontSize: 14, color: 'var(--fg3)', fontStyle: 'italic' }}>{isAr ? 'غير متاح' : 'Not available'}</span>
+              }
+            </div>
+            {speechSummary && speechSummary.pauseCount > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 13, color: 'var(--fg3)' }}>{isAr ? 'أطول توقف' : 'Longest pause'}</span>
+                <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg2)' }}>{speechSummary.longestPauseDuration.toFixed(1)} s</span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Filler words */}
-        {r2.filler_words?.length > 0 && (
+        {/* Filler words — from real transcript analysis */}
+        {speechSummary && speechSummary.fillerWords.length > 0 && (
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, padding: 28, boxShadow: 'var(--shadow)' }}>
-            <h2 style={{ margin: '0 0 18px', fontSize: 17, fontWeight: 700 }}>{lang === 'ar' ? 'كلمات الحشو' : 'Filler Words'}</h2>
+            <h2 style={{ margin: '0 0 18px', fontSize: 17, fontWeight: 700 }}>{isAr ? 'كلمات الحشو' : 'Filler Words'}</h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {r2.filler_words.map((f, i) => {
-                const max = r2.filler_words![0].count || 1;
+              {speechSummary.fillerWords.map((f, i) => {
+                const max = speechSummary.fillerWords[0].count || 1;
                 return (
                   <div key={i}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
@@ -276,7 +360,7 @@ export default function InterviewResultsPage() {
           );
           return (
             <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, padding: 28, boxShadow: 'var(--shadow)' }}>
-              <h2 style={{ margin: '0 0 16px', fontSize: 17, fontWeight: 700 }}>{lang === 'ar' ? 'نقاط القوة' : 'Strengths'}</h2>
+              <h2 style={{ margin: '0 0 16px', fontSize: 17, fontWeight: 700 }}>{isAr ? 'نقاط القوة' : 'Strengths'}</h2>
               {noStrengths ? (
                 <p style={{ margin: 0, fontSize: 14, color: 'var(--fg3)', fontStyle: 'italic' }}>{r2.strengths[0]}</p>
               ) : (
@@ -295,7 +379,7 @@ export default function InterviewResultsPage() {
 
         {r2.improvements?.length > 0 && (
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, padding: 28, boxShadow: 'var(--shadow)' }}>
-            <h2 style={{ margin: '0 0 16px', fontSize: 17, fontWeight: 700 }}>{lang === 'ar' ? 'مجالات التحسين' : 'Areas to Improve'}</h2>
+            <h2 style={{ margin: '0 0 16px', fontSize: 17, fontWeight: 700 }}>{isAr ? 'مجالات التحسين' : 'Areas to Improve'}</h2>
             <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10 }}>
               {r2.improvements.map((s, i) => (
                 <li key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
@@ -313,7 +397,7 @@ export default function InterviewResultsPage() {
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
             <div style={{ width: 40, height: 40, borderRadius: 12, background: 'var(--accent)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 19 }}>✦</div>
             <div>
-              <h2 style={{ margin: '0 0 10px', fontSize: 17, fontWeight: 700, color: 'var(--accent)' }}>{lang === 'ar' ? 'تغذية راجعة من الذكاء الاصطناعي' : 'AI Feedback'}</h2>
+              <h2 style={{ margin: '0 0 10px', fontSize: 17, fontWeight: 700, color: 'var(--accent)' }}>{isAr ? 'تغذية راجعة من الذكاء الاصطناعي' : 'AI Feedback'}</h2>
               <p style={{ margin: 0, fontSize: 15, lineHeight: 1.65, color: 'var(--fg)' }}>{r2.ai_feedback}</p>
             </div>
           </div>
@@ -322,7 +406,7 @@ export default function InterviewResultsPage() {
 
       {r2.recommendations?.length > 0 && (
         <div style={{ marginBottom: 32 }}>
-          <h2 style={{ margin: '0 0 16px', fontSize: 19, fontWeight: 700 }}>{lang === 'ar' ? 'توصيات للتطوير' : 'Recommendations'}</h2>
+          <h2 style={{ margin: '0 0 16px', fontSize: 19, fontWeight: 700 }}>{isAr ? 'توصيات للتطوير' : 'Recommendations'}</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(260px,1fr))', gap: 16 }}>
             {r2.recommendations.map((rec, i) => (
               <div key={i} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 18, padding: '20px 22px', boxShadow: 'var(--shadow)' }}>
@@ -335,22 +419,21 @@ export default function InterviewResultsPage() {
         </div>
       )}
 
-      {/* Interview Questions & Ideal Answers */}
       {questions.length > 0 && (
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
             <div style={{ flex: 1 }}>
               <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700 }}>
-                {lang === 'ar' ? 'أسئلة المقابلة والإجابات المثالية' : 'Interview Questions & Ideal Answers'}
+                {isAr ? 'أسئلة المقابلة والإجابات المثالية' : 'Interview Questions & Ideal Answers'}
               </h2>
               <p style={{ margin: '4px 0 0', fontSize: 13.5, color: 'var(--fg3)' }}>
-                {lang === 'ar'
+                {isAr
                   ? 'انقر على كل سؤال لمقارنة إجابتك بالإجابة المثالية'
                   : 'Click each question to compare your answer with the ideal response'}
               </p>
             </div>
             <div style={{ background: 'rgba(16,185,129,.12)', color: '#10b981', fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 20, whiteSpace: 'nowrap' }}>
-              {lang === 'ar' ? 'بمنهج STAR' : 'STAR Method'}
+              {isAr ? 'بمنهج STAR' : 'STAR Method'}
             </div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

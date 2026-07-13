@@ -1,15 +1,15 @@
 'use client';
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import type { Lang } from './i18n';
+import type { QuestionMetrics } from './ai';
+
+export type { QuestionMetrics };
 
 export interface InterviewResults {
   overall_score: number;
   communication: number;
   confidence: number;
   answer_quality: number;
-  pace_wpm: number;
-  filler_words: { word: string; count: number }[];
-  long_pauses: number;
   strengths: string[];
   improvements: string[];
   ai_feedback: string;
@@ -20,7 +20,6 @@ export interface InterviewResults {
 export interface PresentationResults {
   overall_score: number;
   confidence: number;
-  pace_wpm: number;
   structure: number;
   communication_effectiveness: number;
   ai_feedback: string;
@@ -46,6 +45,9 @@ interface AppState {
   setQuestions: (q: string[]) => void;
   answers: string[];
   setAnswer: (index: number, answer: string) => void;
+  // Per-question speech metrics (real data from recordings)
+  answerMetrics: (QuestionMetrics | null)[];
+  setAnswerMetrics: (index: number, metrics: QuestionMetrics) => void;
   // Results
   interviewResults: InterviewResults | null;
   setInterviewResults: (r: InterviewResults | null) => void;
@@ -58,6 +60,8 @@ interface AppState {
   setTopic: (v: string) => void;
   presTranscript: string;
   setPresTranscript: (v: string) => void;
+  presSpeechMetrics: QuestionMetrics | null;
+  setPresSpeechMetrics: (m: QuestionMetrics | null) => void;
 }
 
 const AppContext = createContext<AppState | null>(null);
@@ -73,8 +77,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [presTranscript, setPresTranscript] = useState('');
   const [questions, setQuestions] = useState<string[]>([]);
   const [answers, setAnswersState] = useState<string[]>(['', '', '', '', '']);
+  const [answerMetrics, setAnswerMetricsState] = useState<(QuestionMetrics | null)[]>([null, null, null, null, null]);
   const [interviewResults, setInterviewResults] = useState<InterviewResults | null>(null);
   const [presResults, setPresResults] = useState<PresentationResults | null>(null);
+  const [presSpeechMetrics, setPresSpeechMetrics] = useState<QuestionMetrics | null>(null);
 
   useEffect(() => {
     const savedLang = localStorage.getItem('qadha-lang') as Lang | null;
@@ -96,13 +102,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const setLang = (l: Lang) => setLangState(l);
   const toggleTheme = () => setTheme(t => t === 'light' ? 'dark' : 'light');
+
   const setAnswer = (index: number, answer: string) => {
     setAnswersState(prev => { const n = [...prev]; n[index] = answer; return n; });
+  };
+
+  const setAnswerMetrics = (index: number, metrics: QuestionMetrics) => {
+    setAnswerMetricsState(prev => { const n = [...prev]; n[index] = metrics; return n; });
   };
 
   const resetInterview = () => {
     setQuestions([]);
     setAnswersState(['', '', '', '', '']);
+    setAnswerMetricsState([null, null, null, null, null]);
     setInterviewResults(null);
   };
 
@@ -113,8 +125,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setRole, setEducation, setExperience, setIntLang,
       topic, setTopic,
       presTranscript, setPresTranscript,
+      presSpeechMetrics, setPresSpeechMetrics,
       questions, setQuestions,
       answers, setAnswer,
+      answerMetrics, setAnswerMetrics,
       interviewResults, setInterviewResults,
       presResults, setPresResults,
       resetInterview,

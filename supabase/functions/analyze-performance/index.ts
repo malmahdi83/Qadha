@@ -89,9 +89,46 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Sanitize a string: strip backticks/backslashes, truncate
     const sanitize = (s: unknown, maxLen = 500) =>
       typeof s === 'string' ? s.trim().slice(0, maxLen).replace(/[`\\]/g, '') : '';
+
+    // Extract pre-computed speech metrics from client (no defaults — if absent, prompt says unavailable)
+    interface FillerEntry { word: string; count: number }
+    interface SpeechMetricsRaw {
+      avgWpm?: number;
+      wpm?: number;
+      fillerWords?: FillerEntry[];
+      pauseCount?: number;
+      avgPauseDuration?: number;
+      longestPauseDuration?: number;
+      durationSeconds?: number;
+    }
+    const sm: SpeechMetricsRaw = (body.speechMetrics && typeof body.speechMetrics === 'object')
+      ? body.speechMetrics as SpeechMetricsRaw
+      : {};
+
+    const avgWpm: number | null = typeof sm.avgWpm === 'number' ? Math.round(sm.avgWpm)
+      : typeof sm.wpm === 'number' ? Math.round(sm.wpm) : null;
+    const pauseCount: number | null = typeof sm.pauseCount === 'number' ? sm.pauseCount : null;
+    const avgPauseDuration: number | null = typeof sm.avgPauseDuration === 'number' ? sm.avgPauseDuration : null;
+    const longestPauseDuration: number | null = typeof sm.longestPauseDuration === 'number' ? sm.longestPauseDuration : null;
+    const fillerWords: FillerEntry[] = Array.isArray(sm.fillerWords) ? sm.fillerWords as FillerEntry[] : [];
+
+    // Build human-readable speech metrics block for the prompt
+    const wpmLine = avgWpm !== null
+      ? `- Speaking pace: ${avgWpm} WPM (ideal interview range: 120–150 WPM)`
+      : '- Speaking pace: not available';
+    const pauseLine = pauseCount !== null
+      ? `- Long pauses (>2 s): ${pauseCount}${pauseCount > 0 && avgPauseDuration !== null ? `, avg ${avgPauseDuration.toFixed(1)} s, longest ${(longestPauseDuration ?? 0).toFixed(1)} s` : ''}`
+      : '- Long pauses: not available';
+    const fillerLine = fillerWords.length > 0
+      ? `- Filler words detected: ${fillerWords.map((f: FillerEntry) => `"${f.word}" ×${f.count}`).join(', ')}`
+      : '- Filler words: none detected';
+
+    const speechMetricsBlock = `MEASURED SPEECH DATA (from actual audio analysis — do NOT re-estimate these):
+${wpmLine}
+${pauseLine}
+${fillerLine}`;
 
     const isArabic = lang === 'ar';
     let systemPrompt: string;
@@ -127,13 +164,14 @@ CRITICAL RULES:
 4. overall_score = weighted average of ALL answers' quality. If most answers are poor, overall must be LOW (under 40).
 5. Strengths: ONLY list strengths that are CLEARLY and DIRECTLY supported by specific things the candidate actually said. If the answers are weak, vague, or empty, write exactly: "No clear strengths could be identified from the answers provided." — do NOT invent strengths.
 6. Improvements: must be specific, actionable, and tied to the ACTUAL weaknesses observed in the answers.
-7. ai_feedback: be honest and direct, like a real coach. Point out weak answers specifically. Do NOT say "great effort" if the answers were poor.
-8. Return valid JSON only, no markdown, no extra text.`;
-
-
+7. For "confidence" (delivery confidence estimate 0-100): factor in the measured speech data provided — pace vs ideal range, filler word frequency, pause frequency — as well as answer completeness and hesitation markers visible in the transcript. A fast, filler-heavy, pause-riddled delivery should lower this score even if answers are decent.
+8. ai_feedback: be honest and direct, like a real coach. Point out weak answers specifically. Do NOT say "great effort" if the answers were poor.
+9. Return valid JSON only, no markdown, no extra text.`;
 
       userPrompt = isArabic
         ? `أنت محلّل مقابلات صارم وواقعي. قيّم أداء هذا المرشح لوظيفة ${role} (تعليم: ${education}, خبرة: ${experience}).
+
+${speechMetricsBlock}
 
 إجاباته الفعلية:
 ${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. السؤال: ${q.question}\nالإجابة: "${q.answer || '(لم يُقدِّم إجابة)'}"`).join('\n\n')}
@@ -148,12 +186,14 @@ ${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. ال
    - إجابة ممتازة بمنهج STAR → 80-100
 3. overall_score = متوسط حقيقي لجودة كل الإجابات. إذا كانت معظم الإجابات ضعيفة، يجب أن تكون النتيجة الإجمالية منخفضة (أقل من 40).
 4. نقاط القوة: اذكرها فقط إذا كانت مدعومة بوضوح من الإجابات الفعلية. إذا كانت الإجابات ضعيفة اكتب بالضبط: ["لم تتضح نقاط قوة واضحة من إجابات هذه الجلسة."]
-5. احسب كلمات الحشو الفعلية فقط من نص الإجابات (يعني، اممم، آه، طيب، صراحة).
+5. "confidence" (تقدير الثقة في الإلقاء): احسبه بناءً على بيانات الكلام المقاسة أعلاه (وتيرة الكلام مقارنة بالمثالية، كثافة كلمات الحشو، تكرار التوقفات) إضافةً إلى اكتمال الإجابات وعلامات التردد في النص.
 6. اكتب إجابة مثالية لكل سؤال بالعربية بمنهج STAR مناسبة لمستوى ${experience} في ${role}.
 
 أعد JSON فقط، جميع القيم يجب أن تعكس الإجابات الفعلية:
-{"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"pace_wpm":110,"filler_words":[{"word":"يعني","count":4}],"long_pauses":3,"strengths":["نقطة قوة حقيقية مدعومة بالإجابات أو الجملة الثابتة إذا لم توجد"],"improvements":["تحسين محدد مبني على ضعف فعلي في الإجابة 1","تحسين محدد 2","تحسين محدد 3"],"ai_feedback":"تغذية راجعة صريحة وصادقة كمدرب مقابلات حقيقي، تشير إلى الإجابات الضعيفة بالتحديد.","recommendations":[{"title":"توصية محددة 1","description":"نصيحة عملية 1"},{"title":"توصية محددة 2","description":"نصيحة عملية 2"},{"title":"توصية محددة 3","description":"نصيحة عملية 3"}],"ideal_answers":[{"question":"نص السؤال 1","ideal_answer":"إجابة مثالية بمنهج STAR"},{"question":"نص السؤال 2","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 3","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 4","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 5","ideal_answer":"إجابة مثالية"}]}`
+{"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"strengths":["نقطة قوة حقيقية مدعومة بالإجابات أو الجملة الثابتة إذا لم توجد"],"improvements":["تحسين محدد مبني على ضعف فعلي في الإجابة 1","تحسين محدد 2","تحسين محدد 3"],"ai_feedback":"تغذية راجعة صريحة وصادقة كمدرب مقابلات حقيقي، تشير إلى الإجابات الضعيفة بالتحديد.","recommendations":[{"title":"توصية محددة 1","description":"نصيحة عملية 1"},{"title":"توصية محددة 2","description":"نصيحة عملية 2"},{"title":"توصية محددة 3","description":"نصيحة عملية 3"}],"ideal_answers":[{"question":"نص السؤال 1","ideal_answer":"إجابة مثالية بمنهج STAR"},{"question":"نص السؤال 2","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 3","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 4","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 5","ideal_answer":"إجابة مثالية"}]}`
         : `You are a strict, realistic interview coach evaluating a candidate for a ${role} role (Education: ${education}, Experience: ${experience}).
+
+${speechMetricsBlock}
 
 Candidate's actual answers:
 ${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. Q: ${q.question}\n   A: "${q.answer || '(no answer given)'}"`).join('\n\n')}
@@ -170,12 +210,12 @@ STRICT EVALUATION RULES — follow exactly:
    - Excellent STAR-structured, specific → 80-100
 3. overall_score = honest weighted average of ALL answers. If most answers are short/vague/empty, overall MUST be under 40.
 4. strengths: ONLY list if clearly supported by actual answer content. If answers are weak, return exactly: ["No clear strengths could be identified from the answers provided."]
-5. Count REAL filler words from text. Do NOT copy example counts.
+5. "confidence" (delivery confidence estimate 0-100): base it on the MEASURED SPEECH DATA above — pace vs ideal range (120-150 WPM), filler word density, pause frequency — plus answer completeness and hesitation markers in the transcript. Do NOT invent or re-estimate speech values.
 6. Write a professional ideal answer for each question using STAR, tailored to ${experience}-level ${role}.
 7. ai_feedback: be direct and honest like a real coach. Name the weak answers specifically. Do NOT pad with generic praise.
 
 Return ONLY valid JSON, all values must reflect actual answer quality:
-{"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"pace_wpm":120,"filler_words":[{"word":"um","count":3}],"long_pauses":2,"strengths":["Genuine strength from answers, or the fixed message if none"],"improvements":["Specific improvement tied to weak answer 1","Specific improvement 2","Specific improvement 3"],"ai_feedback":"Direct, honest coaching feedback naming which answers were weak and why.","recommendations":[{"title":"Specific recommendation 1","description":"Practical advice 1"},{"title":"Specific recommendation 2","description":"Practical advice 2"},{"title":"Specific recommendation 3","description":"Practical advice 3"}],"ideal_answers":[{"question":"Actual Q1 text","ideal_answer":"STAR ideal answer for Q1"},{"question":"Actual Q2 text","ideal_answer":"Ideal answer for Q2"},{"question":"Actual Q3 text","ideal_answer":"Ideal answer for Q3"},{"question":"Actual Q4 text","ideal_answer":"Ideal answer for Q4"},{"question":"Actual Q5 text","ideal_answer":"Ideal answer for Q5"}]}`;
+{"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"strengths":["Genuine strength from answers, or the fixed message if none"],"improvements":["Specific improvement tied to weak answer 1","Specific improvement 2","Specific improvement 3"],"ai_feedback":"Direct, honest coaching feedback naming which answers were weak and why.","recommendations":[{"title":"Specific recommendation 1","description":"Practical advice 1"},{"title":"Specific recommendation 2","description":"Practical advice 2"},{"title":"Specific recommendation 3","description":"Practical advice 3"}],"ideal_answers":[{"question":"Actual Q1 text","ideal_answer":"STAR ideal answer for Q1"},{"question":"Actual Q2 text","ideal_answer":"Ideal answer for Q2"},{"question":"Actual Q3 text","ideal_answer":"Ideal answer for Q3"},{"question":"Actual Q4 text","ideal_answer":"Ideal answer for Q4"},{"question":"Actual Q5 text","ideal_answer":"Ideal answer for Q5"}]}`;
 
     } else if (mode === 'presentation') {
       const topic = sanitize(body.topic, 200);
@@ -188,25 +228,31 @@ Return ONLY valid JSON, all values must reflect actual answer quality:
         );
       }
 
-      systemPrompt = 'You are an expert presentation coach and analyst. Analyze the speaker\'s actual transcript carefully and return valid JSON only, no markdown, no extra text. Base ALL scores on the real content of what was said.';
+      systemPrompt = `You are an expert presentation coach and analyst. Analyze the speaker's actual transcript carefully and return valid JSON only, no markdown, no extra text. Base ALL scores on the real content of what was said.
+
+For "confidence" (delivery confidence estimate 0-100): use the MEASURED SPEECH DATA provided — pace vs ideal range (130-160 WPM for presentations), filler word density, pause frequency — along with structure quality and clarity. Do NOT re-estimate any speech values.`;
 
       userPrompt = isArabic
         ? `قيّم هذا العرض التقديمي الفعلي حول: "${topic}"
 
+${speechMetricsBlock}
+
 النص الكامل للعرض:
 "${transcript}"
 
-حلّل المحتوى الفعلي: البنية، الوضوح، الثقة، وتيرة الكلام، كلمات الحشو، الفاعلية.
+حلّل المحتوى الفعلي: البنية، الوضوح، فاعلية التواصل. لا تُقدّر وتيرة الكلام أو التوقفات — فهي مقدّمة أعلاه من التسجيل الفعلي.
 أعد JSON فقط:
-{"overall_score":0,"confidence":0,"pace_wpm":0,"structure":0,"communication_effectiveness":0,"ai_feedback":"تقييم مخصص.","recommendations":[{"title":"عنوان1","description":"وصف1"},{"title":"عنوان2","description":"وصف2"},{"title":"عنوان3","description":"وصف3"}]}`
+{"overall_score":0,"confidence":0,"structure":0,"communication_effectiveness":0,"ai_feedback":"تقييم مخصص بناءً على النص والبيانات الصوتية الفعلية.","recommendations":[{"title":"عنوان1","description":"وصف1"},{"title":"عنوان2","description":"وصف2"},{"title":"عنوان3","description":"وصف3"}]}`
         : `Evaluate this ACTUAL presentation on: "${topic}"
+
+${speechMetricsBlock}
 
 Full transcript:
 "${transcript}"
 
-Analyze real content: structure, clarity, confidence, speaking pace (estimate WPM), filler words, communication effectiveness.
+Analyze real content: structure, clarity, communication effectiveness. Do NOT re-estimate speaking pace or pauses — they are provided above from the actual recording.
 Return ONLY valid JSON:
-{"overall_score":0,"confidence":0,"pace_wpm":0,"structure":0,"communication_effectiveness":0,"ai_feedback":"Personalized 2-3 sentence feedback based on the actual transcript.","recommendations":[{"title":"Title1","description":"Description1"},{"title":"Title2","description":"Description2"},{"title":"Title3","description":"Description3"}]}`;
+{"overall_score":0,"confidence":0,"structure":0,"communication_effectiveness":0,"ai_feedback":"Personalized 2-3 sentence feedback based on the actual transcript and speech data.","recommendations":[{"title":"Title1","description":"Description1"},{"title":"Title2","description":"Description2"},{"title":"Title3","description":"Description3"}]}`;
 
     } else {
       return new Response(

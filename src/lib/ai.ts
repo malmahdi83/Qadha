@@ -41,6 +41,48 @@ export async function generateQuestions(params: GenerateQuestionsParams): Promis
   return data.questions;
 }
 
+// ── Speech metrics ─────────────────────────────────────────────────────────────
+
+export interface PauseMetrics {
+  pauseCount: number;
+  avgPauseDuration: number;   // seconds
+  longestPauseDuration: number; // seconds
+}
+
+export interface QuestionMetrics extends PauseMetrics {
+  durationSeconds: number;
+  wordCount: number;
+  wpm: number;
+  fillerWords: { word: string; count: number }[];
+}
+
+export interface SpeechSummary {
+  avgWpm: number;
+  fillerWords: { word: string; count: number }[];
+  pauseCount: number;
+  avgPauseDuration: number;
+  longestPauseDuration: number;
+}
+
+const FILLERS_EN = ['um', 'uh', 'like', 'you know', 'actually', 'basically', 'literally'];
+const FILLERS_AR = ['أمم', 'اممم', 'يعني', 'آه', 'اه', 'بصراحة', 'طيب'];
+
+export function countFillerWords(transcript: string, lang: string): { word: string; count: number }[] {
+  const text = transcript.toLowerCase().trim();
+  if (!text) return [];
+  const fillers = lang === 'ar' ? FILLERS_AR : FILLERS_EN;
+  const results: { word: string; count: number }[] = [];
+  for (const filler of fillers) {
+    const escaped = filler.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escaped, 'gi');
+    const count = (text.match(regex) ?? []).length;
+    if (count > 0) results.push({ word: filler, count });
+  }
+  return results.sort((a, b) => b.count - a.count);
+}
+
+// ── Analyze performance ────────────────────────────────────────────────────────
+
 export interface AnalyzeInterviewParams {
   mode: 'interview';
   lang: string;
@@ -48,6 +90,7 @@ export interface AnalyzeInterviewParams {
   education: string;
   experience: string;
   questions: { question: string; answer: string }[];
+  speechMetrics: SpeechSummary;
 }
 
 export interface AnalyzePresentationParams {
@@ -55,6 +98,7 @@ export interface AnalyzePresentationParams {
   lang: string;
   topic: string;
   transcript: string;
+  speechMetrics: SpeechSummary & { durationSeconds: number };
 }
 
 export async function analyzePerformance<T>(
@@ -62,6 +106,8 @@ export async function analyzePerformance<T>(
 ): Promise<T> {
   return callEdge<T>('analyze-performance', params as unknown as Record<string, unknown>);
 }
+
+// ── Session DB ─────────────────────────────────────────────────────────────────
 
 export interface SessionRow {
   id?: string;
@@ -125,7 +171,10 @@ export async function fetchTTSAudio(text: string, lang: string): Promise<Blob> {
   return res.blob();
 }
 
-export async function transcribeAudio(blob: Blob, lang: string): Promise<string> {
+export async function transcribeAudio(
+  blob: Blob,
+  lang: string
+): Promise<{ transcript: string } & PauseMetrics> {
   const token = await getAuthToken();
   const form = new FormData();
   form.append('audio', blob, 'recording.webm');
@@ -141,6 +190,16 @@ export async function transcribeAudio(blob: Blob, lang: string): Promise<string>
     const err = await res.text();
     throw new Error(`Transcription failed: ${err}`);
   }
-  const data = await res.json() as { transcript: string };
-  return data.transcript ?? '';
+  const data = await res.json() as {
+    transcript: string;
+    pauseCount: number;
+    avgPauseDuration: number;
+    longestPauseDuration: number;
+  };
+  return {
+    transcript: data.transcript ?? '',
+    pauseCount: data.pauseCount ?? 0,
+    avgPauseDuration: data.avgPauseDuration ?? 0,
+    longestPauseDuration: data.longestPauseDuration ?? 0,
+  };
 }
