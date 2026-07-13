@@ -26,7 +26,9 @@ async function callEdge<T>(name: string, body: Record<string, unknown>): Promise
 export async function getAuthToken(): Promise<string> {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
-  return session?.access_token ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  const token = session?.access_token ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  console.log('[getAuthToken] session:', session ? 'present' : 'null', '| token type:', session?.access_token ? 'user' : 'anon');
+  return token;
 }
 
 export interface GenerateQuestionsParams {
