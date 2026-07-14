@@ -5,6 +5,7 @@ import { Mic, Square, RotateCcw, ArrowRight, Loader2, Volume2, VolumeX, RefreshC
 import { useApp } from '@/lib/context';
 import { t } from '@/lib/i18n';
 import { transcribeAudio, fetchTTSAudio, countFillerWords, getAuthToken } from '@/lib/ai';
+import { createClient } from '@/lib/supabase';
 
 function fmt(s: number) {
   const m = Math.floor(s / 60), ss = s % 60;
@@ -258,6 +259,13 @@ export default function InterviewSessionPage() {
     audioStreamRef.current?.getTracks().forEach(t => t.stop());
     audioStreamRef.current = null;
   }, []);
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    createClient().auth.getSession().then(({ data: { session } }) => {
+      if (!session) router.replace('/auth/login');
+    });
+  }, [router]);
 
   useEffect(() => {
     mountedRef.current = true;

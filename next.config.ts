@@ -31,15 +31,15 @@ const securityHeaders = [
       "default-src 'self'",
       // Supabase API + edge functions
       `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.elevenlabs.io`,
-      // Next.js requires unsafe-inline for styles; no external style sheets
-      "style-src 'self' 'unsafe-inline'",
+      // Next.js requires unsafe-inline; Google Fonts loaded from globals.css
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       // unsafe-inline required — Next.js injects inline scripts for hydration
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       // Camera/mic for interview recording
       "media-src 'self' blob:",
       // Avatar emoji rendered as text; no external images needed
       "img-src 'self' data: blob:",
-      "font-src 'self'",
+      "font-src 'self' https://fonts.gstatic.com",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",

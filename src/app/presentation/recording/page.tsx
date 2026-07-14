@@ -5,6 +5,7 @@ import { Presentation, Play, Square, Sparkles, Loader2, Mic } from 'lucide-react
 import { useApp } from '@/lib/context';
 import { t } from '@/lib/i18n';
 import { transcribeAudio, countFillerWords, getAuthToken } from '@/lib/ai';
+import { createClient } from '@/lib/supabase';
 
 function fmt(s: number) {
   const m = Math.floor(s / 60), ss = s % 60;
@@ -48,6 +49,13 @@ export default function PresentationRecordingPage() {
     audioStreamRef.current = null;
     setCamOn(false);
   }, []);
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    createClient().auth.getSession().then(({ data: { session } }) => {
+      if (!session) router.replace('/auth/login');
+    });
+  }, [router]);
 
   useEffect(() => {
     enableCam();
