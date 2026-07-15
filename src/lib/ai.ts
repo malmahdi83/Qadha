@@ -84,6 +84,19 @@ export function countFillerWords(transcript: string, lang: string): { word: stri
 
 // ── Analyze performance ────────────────────────────────────────────────────────
 
+// Detect the language of a transcript by character ratio
+export function detectLanguage(text: string): 'en' | 'ar' | 'mixed' {
+  if (!text || text.trim().length < 3) return 'en';
+  const arabicChars = (text.match(/[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/g) ?? []).length;
+  const latinChars = (text.match(/[a-zA-Z]/g) ?? []).length;
+  const total = arabicChars + latinChars;
+  if (total === 0) return 'en';
+  const ratio = arabicChars / total;
+  if (ratio >= 0.7) return 'ar';
+  if (ratio <= 0.2) return 'en';
+  return 'mixed';
+}
+
 export interface AnalyzeInterviewParams {
   mode: 'interview';
   lang: string;
@@ -92,6 +105,7 @@ export interface AnalyzeInterviewParams {
   experience: string;
   questions: { question: string; answer: string }[];
   speechMetrics: SpeechSummary;
+  contentOnlyMask?: boolean[]; // true = language mismatch, evaluate content only
 }
 
 export interface AnalyzePresentationParams {

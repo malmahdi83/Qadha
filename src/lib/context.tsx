@@ -51,6 +51,9 @@ interface AppState {
   // Per-question speech metrics (real data from recordings)
   answerMetrics: (QuestionMetrics | null)[];
   setAnswerMetrics: (index: number, metrics: QuestionMetrics) => void;
+  // Content-only evaluation flags (true = language mismatch, user chose content-only)
+  contentOnlyAnswers: boolean[];
+  setContentOnly: (index: number, value: boolean) => void;
   // Results
   interviewResults: InterviewResults | null;
   setInterviewResults: (r: InterviewResults | null) => void;
@@ -86,6 +89,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [interviewMode, setInterviewMode] = useState<InterviewExperienceMode>('assisted');
   const [answers, setAnswersState] = useState<string[]>(['', '', '', '', '']);
   const [answerMetrics, setAnswerMetricsState] = useState<(QuestionMetrics | null)[]>([null, null, null, null, null]);
+  const [contentOnlyAnswers, setContentOnlyAnswersState] = useState<boolean[]>([false, false, false, false, false]);
   const [interviewResults, setInterviewResults] = useState<InterviewResults | null>(null);
   const [presResults, setPresResults] = useState<PresentationResults | null>(null);
   const [presSpeechMetrics, setPresSpeechMetrics] = useState<QuestionMetrics | null>(null);
@@ -123,10 +127,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setAnswerMetricsState(prev => { const n = [...prev]; n[index] = metrics; return n; });
   };
 
+  const setContentOnly = (index: number, value: boolean) => {
+    setContentOnlyAnswersState(prev => { const n = [...prev]; n[index] = value; return n; });
+  };
+
   const setQuestions = (q: string[]) => setQuestionsState(q);
 
   const resetInterview = () => {
-    // Persist the just-completed session's questions so the next session can avoid repeating them
     if (questions.length > 0) {
       setLastQuestionsState(questions);
       try { localStorage.setItem('qadha-last-questions', JSON.stringify(questions)); } catch { /* ignore */ }
@@ -134,6 +141,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setQuestionsState([]);
     setAnswersState(['', '', '', '', '']);
     setAnswerMetricsState([null, null, null, null, null]);
+    setContentOnlyAnswersState([false, false, false, false, false]);
     setInterviewResults(null);
   };
 
@@ -149,6 +157,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       interviewMode, setInterviewMode,
       answers, setAnswer,
       answerMetrics, setAnswerMetrics,
+      contentOnlyAnswers, setContentOnly,
       interviewResults, setInterviewResults,
       presResults, setPresResults,
       resetInterview,

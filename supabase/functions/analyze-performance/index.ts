@@ -148,6 +148,11 @@ ${fillerLine}`;
           })
         : [];
 
+      const contentOnlyMask: boolean[] = Array.isArray(body.contentOnlyMask)
+        ? body.contentOnlyMask.slice(0, 5).map((v: unknown) => v === true)
+        : Array(questions.length).fill(false);
+      const hasContentOnly = contentOnlyMask.some(Boolean);
+
       systemPrompt = `You are a strict, realistic interview performance analyst — like a senior hiring manager who has seen thousands of interviews. Your job is to evaluate the ACTUAL quality of what the candidate said, not what they could have said.
 
 CRITICAL RULES:
@@ -172,9 +177,9 @@ CRITICAL RULES:
         ? `أنت محلّل مقابلات صارم وواقعي. قيّم أداء هذا المرشح لوظيفة ${role} (تعليم: ${education}, خبرة: ${experience}).
 
 ${speechMetricsBlock}
-
+${hasContentOnly ? `\nتنبيه: بعض الإجابات المحددة بـ [محتوى فقط] قُدِّمت بلغة مختلفة عن لغة المقابلة. لهذه الإجابات: قيّم المحتوى والأفكار والبنية فقط — تجاهل درجات اللغة والتواصل اللفظي لها في مقياس communication.\n` : ''}
 إجاباته الفعلية:
-${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. السؤال: ${q.question}\nالإجابة: "${q.answer || '(لم يُقدِّم إجابة)'}"`).join('\n\n')}
+${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. السؤال: ${q.question}\nالإجابة: "${q.answer || '(لم يُقدِّم إجابة)'}"${contentOnlyMask[i] ? ' [محتوى فقط — تجاهل تقييم اللغة]' : ''}`).join('\n\n')}
 
 تعليمات صارمة يجب اتباعها:
 1. قيّم كل إجابة بناءً على: الصلة بالسؤال، الاكتمال، التحديد، الاحترافية، وجود أمثلة، منهج STAR.
@@ -196,7 +201,8 @@ ${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. ال
 ${speechMetricsBlock}
 
 Candidate's actual answers:
-${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. Q: ${q.question}\n   A: "${q.answer || '(no answer given)'}"`).join('\n\n')}
+${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. Q: ${q.question}\n   A: "${q.answer || '(no answer given)'}"${contentOnlyMask[i] ? ' [CONTENT ONLY — language mismatch, skip language/communication scoring for this answer]' : ''}`).join('\n\n')}
+${hasContentOnly ? '\nNOTE: Answers marked [CONTENT ONLY] were answered in a different language than the interview language. For these answers ONLY: evaluate ideas, structure, relevance, and completeness — do NOT penalize language or communication style. Adjust overall communication score accordingly.' : ''}
 
 STRICT EVALUATION RULES — follow exactly:
 1. Evaluate each answer on: relevance, completeness, specificity, professionalism, use of examples, STAR structure.

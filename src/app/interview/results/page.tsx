@@ -141,7 +141,7 @@ function AccordionCard({
 
 export default function InterviewResultsPage() {
   const { lang, role, education, experience, intLang, questions, answers, answerMetrics,
-    interviewResults, setInterviewResults, resetInterview, interviewMode } = useApp();
+    contentOnlyAnswers, interviewResults, setInterviewResults, resetInterview, interviewMode } = useApp();
   const tr = t(lang);
   const router = useRouter();
   const calledRef = useRef(false);
@@ -180,6 +180,7 @@ export default function InterviewResultsPage() {
         avgPauseDuration: 0,
         longestPauseDuration: 0,
       },
+      contentOnlyMask: contentOnlyAnswers.some(Boolean) ? contentOnlyAnswers : undefined,
     })
       .then(res => { setInterviewResults(res); setLoading(false); })
       .catch(err => {
@@ -271,11 +272,18 @@ export default function InterviewResultsPage() {
               {isAr ? 'نتيجة المقابلة' : 'Interview Score'}
             </span>
             <span style={{ fontSize: 11, fontWeight: 600, background: 'var(--surface2)', color: 'var(--fg3)', border: '1px solid var(--border)', padding: '2px 10px', borderRadius: 20 }}>
-              {isAr ? tr.session.interviewModeLabel : tr.session.interviewModeLabel}:{' '}
-              {interviewMode === 'real'
-                ? (isAr ? tr.session.realModeLabel : tr.session.realModeLabel)
-                : (isAr ? tr.session.assistedModeLabel : tr.session.assistedModeLabel)}
+              {tr.session.interviewModeLabel}:{' '}
+              {interviewMode === 'real' ? tr.session.realModeLabel : tr.session.assistedModeLabel}
             </span>
+            {contentOnlyAnswers.some(Boolean) && (
+              <span
+                title={isAr
+                  ? `${contentOnlyAnswers.filter(Boolean).length} من إجاباتك قُيِّمت من حيث المحتوى فقط (اختلاف اللغة — تم تخطي درجات اللغة والتواصل)`
+                  : `${contentOnlyAnswers.filter(Boolean).length} answer(s) evaluated for content only (language mismatch — language & communication scores skipped)`}
+                style={{ fontSize: 11, fontWeight: 700, background: 'rgba(245,158,11,.15)', color: '#d97706', border: '1px solid rgba(245,158,11,.35)', padding: '2px 10px', borderRadius: 20, cursor: 'help' }}>
+                {isAr ? 'تقييم محتوى فقط ⓘ' : 'Content Only Evaluation ⓘ'}
+              </span>
+            )}
           </div>
           <h1 style={{ margin: '0 0 8px', fontSize: 'clamp(22px,3vw,30px)', fontWeight: 800, letterSpacing: '-.02em' }}>
             {isAr ? 'تقرير الأداء' : 'Performance Report'}

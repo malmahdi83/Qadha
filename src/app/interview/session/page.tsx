@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { Mic, Square, RotateCcw, ArrowRight, Loader2, Volume2, VolumeX, RefreshCw, Eye, EarOff } from 'lucide-react';
 import { useApp } from '@/lib/context';
 import { t } from '@/lib/i18n';
-import { transcribeAudio, fetchTTSAudio, countFillerWords, getAuthToken } from '@/lib/ai';
+import { transcribeAudio, fetchTTSAudio, countFillerWords, getAuthToken, detectLanguage } from '@/lib/ai';
 import { createClient } from '@/lib/supabase';
 
 function fmt(s: number) {
@@ -201,10 +201,10 @@ function useTTS(lang: string) {
   return { speak, cancel, manualPlay, speaking, loading, playBlocked, ttsError, muted, toggleMute };
 }
 
-type Phase = 'speaking' | 'ready' | 'recording' | 'transcribing' | 'done';
+type Phase = 'speaking' | 'ready' | 'recording' | 'transcribing' | 'mismatch' | 'done';
 
 export default function InterviewSessionPage() {
-  const { lang, intLang, questions, answers, setAnswer, setAnswerMetrics, interviewMode } = useApp();
+  const { lang, intLang, questions, answers, setAnswer, setAnswerMetrics, setContentOnly, interviewMode } = useApp();
   const tr = t(lang);
   const router = useRouter();
   const dir = lang === 'ar' ? 'rtl' : 'ltr';
@@ -224,6 +224,9 @@ export default function InterviewSessionPage() {
   const [elapsed, setElapsed] = useState(0);
   const [recorded, setRecorded] = useState([false, false, false, false, false]);
   const [transcriptError, setTranscriptError] = useState('');
+  const [pendingTranscript, setPendingTranscript] = useState<string | null>(null);
+  const [pendingMetrics, setPendingMetrics] = useState<{ durationSeconds: number; wordCount: number; wpm: number; fillerWords: { word: string; count: number }[]; pauseCount: number; avgPauseDuration: number; longestPauseDuration: number } | null>(null);
+  const [mismatchQIndex, setMismatchQIndex] = useState<number>(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const camStreamRef = useRef<MediaStream | null>(null);
@@ -320,23 +323,31 @@ export default function InterviewSessionPage() {
           await transcribeAudio(blob, intLang, authToken);
         const trimmed = transcript.trim();
         const wordCount = trimmed ? trimmed.split(/\s+/).filter(Boolean).length : 0;
-        // Only compute WPM when duration and transcript are meaningful
         const wpm = durationSeconds > 2 && wordCount > 0
           ? Math.round(wordCount / (durationSeconds / 60))
           : 0;
         const fillerWords = countFillerWords(trimmed, intLang);
-        setAnswerMetrics(capturedIndex, {
+        const metrics = {
           durationSeconds: parseFloat(durationSeconds.toFixed(1)),
-          wordCount,
-          wpm,
-          fillerWords,
-          pauseCount,
-          avgPauseDuration,
-          longestPauseDuration,
-        });
-        setAnswer(capturedIndex, trimmed);
-        setRecorded(r => { const n = [...r]; n[capturedIndex] = true; return n; });
-        setQIndex(i => { if (i === capturedIndex) setPhase('done'); return i; });
+          wordCount, wpm, fillerWords, pauseCount, avgPauseDuration, longestPauseDuration,
+        };
+
+        // Language mismatch detection
+        const detectedLang = detectLanguage(trimmed);
+        const expectedLang = intLang === 'ar' ? 'ar' : 'en';
+        const isMismatch = trimmed.length > 5 && detectedLang !== 'mixed' && detectedLang !== expectedLang;
+
+        if (isMismatch) {
+          setPendingTranscript(trimmed);
+          setPendingMetrics(metrics);
+          setMismatchQIndex(capturedIndex);
+          setQIndex(i => { if (i === capturedIndex) setPhase('mismatch'); return i; });
+        } else {
+          setAnswerMetrics(capturedIndex, metrics);
+          setAnswer(capturedIndex, trimmed);
+          setRecorded(r => { const n = [...r]; n[capturedIndex] = true; return n; });
+          setQIndex(i => { if (i === capturedIndex) setPhase('done'); return i; });
+        }
       } catch (err) {
         console.error('Transcription error:', err);
         setQIndex(i => { if (i === capturedIndex) { setTranscriptError(isAr ? 'تعذّر تحويل الصوت إلى نص. حاول مجددًا.' : 'Could not transcribe audio. Please try again.'); setPhase('ready'); } return i; });
@@ -371,6 +382,23 @@ export default function InterviewSessionPage() {
     setPhase('speaking');
   };
 
+  const handleMismatchRetry = () => {
+    setPendingTranscript(null);
+    setPendingMetrics(null);
+    setPhase('ready');
+  };
+
+  const handleMismatchContentOnly = () => {
+    if (pendingTranscript == null || pendingMetrics == null) return;
+    setAnswerMetrics(mismatchQIndex, pendingMetrics);
+    setAnswer(mismatchQIndex, pendingTranscript);
+    setContentOnly(mismatchQIndex, true);
+    setRecorded(r => { const n = [...r]; n[mismatchQIndex] = true; return n; });
+    setPendingTranscript(null);
+    setPendingMetrics(null);
+    setPhase('done');
+  };
+
   const replayQuestion = () => {
     if (phase === 'recording') stopRecording();
     spokenIndexRef.current = -1;
@@ -391,7 +419,7 @@ export default function InterviewSessionPage() {
 
   const isRecorded = recorded[qIndex];
   const allPreviousAnswered = qIndex >= 4 && recorded.slice(0, 4).every(Boolean);
-  const canProceed = (isRecorded || allPreviousAnswered) && phase !== 'transcribing' && phase !== 'recording';
+  const canProceed = (isRecorded || allPreviousAnswered) && phase !== 'transcribing' && phase !== 'recording' && phase !== 'mismatch';
   const savedTranscript = answers[qIndex] ?? '';
 
   return (
@@ -579,6 +607,52 @@ export default function InterviewSessionPage() {
               <span style={{ fontSize: 15, color: '#10b981', flexShrink: 0 }}>✓</span>
               <p style={{ margin: 0, fontSize: 13, color: 'var(--fg2)' }}>
                 {isAr ? 'تم تسجيل إجابتك. انتقل إلى السؤال التالي أو أعد التسجيل.' : 'Answer recorded. Proceed to the next question or re-record.'}
+              </p>
+            </div>
+          )}
+
+          {/* Language mismatch dialog */}
+          {phase === 'mismatch' && pendingTranscript != null && (
+            <div style={{ background: 'var(--surface)', border: '2px solid #f59e0b', borderRadius: 18, padding: '20px 20px', boxShadow: 'var(--shadow)' }}>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 14 }}>
+                <span style={{ fontSize: 24, flexShrink: 0 }}>⚠️</span>
+                <div>
+                  <p style={{ margin: '0 0 6px', fontWeight: 800, fontSize: 15, color: 'var(--fg)' }}>
+                    {isAr ? 'تم اكتشاف اختلاف في اللغة' : 'Language mismatch detected'}
+                  </p>
+                  <p style={{ margin: 0, fontSize: 13.5, color: 'var(--fg2)', lineHeight: 1.55 }}>
+                    {isAr
+                      ? `المقابلة باللغة العربية، لكن إجابتك تبدو بالإنجليزية. كيف تريد المتابعة؟`
+                      : `This interview is in English, but your answer appears to be in Arabic. How would you like to proceed?`}
+                  </p>
+                </div>
+              </div>
+              {/* Show detected transcript */}
+              <div style={{ background: 'var(--surface2)', borderRadius: 10, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: 'var(--fg2)', lineHeight: 1.6 }}>
+                <span style={{ fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--fg3)', display: 'block', marginBottom: 5 }}>
+                  {isAr ? 'إجابتك المُسجَّلة:' : 'Your recorded answer:'}
+                </span>
+                {pendingTranscript}
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <button
+                  onClick={handleMismatchRetry}
+                  style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 14, padding: '12px 18px', borderRadius: 11, cursor: 'pointer' }}>
+                  <RotateCcw size={15} />
+                  {isAr
+                    ? `أعد التسجيل بالعربية ✓ (موصى به)`
+                    : `Retry and answer in English ✓ (Recommended)`}
+                </button>
+                <button
+                  onClick={handleMismatchContentOnly}
+                  style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--fg2)', fontFamily: 'inherit', fontWeight: 600, fontSize: 13, padding: '12px 18px', borderRadius: 11, cursor: 'pointer' }}>
+                  {isAr ? 'تقييم المحتوى فقط' : 'Continue — evaluate content only'}
+                </button>
+              </div>
+              <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--fg3)', lineHeight: 1.5 }}>
+                {isAr
+                  ? 'تقييم المحتوى فقط: يتجاهل درجات اللغة والتواصل، ويُقيِّم الأفكار والمنطق فحسب.'
+                  : 'Content-only evaluation skips language & communication scoring — only your ideas and structure are evaluated.'}
               </p>
             </div>
           )}
