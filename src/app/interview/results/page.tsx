@@ -141,7 +141,7 @@ function AccordionCard({
 
 export default function InterviewResultsPage() {
   const { lang, role, education, experience, intLang, questions, answers, answerMetrics,
-    interviewResults, setInterviewResults, resetInterview } = useApp();
+    interviewResults, setInterviewResults, resetInterview, interviewMode } = useApp();
   const tr = t(lang);
   const router = useRouter();
   const calledRef = useRef(false);
@@ -266,8 +266,16 @@ export default function InterviewResultsPage() {
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 24, padding: 'clamp(24px,4vw,48px)', boxShadow: 'var(--shadow)', marginBottom: 24, display: 'flex', gap: 40, alignItems: 'center', flexWrap: 'wrap' }}>
         <ScoreGauge score={r2.overall_score} />
         <div style={{ flex: 1, minWidth: 220 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.08em', color: 'var(--accent)', textTransform: 'uppercase', marginBottom: 10 }}>
-            {isAr ? 'نتيجة المقابلة' : 'Interview Score'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.08em', color: 'var(--accent)', textTransform: 'uppercase' }}>
+              {isAr ? 'نتيجة المقابلة' : 'Interview Score'}
+            </span>
+            <span style={{ fontSize: 11, fontWeight: 600, background: 'var(--surface2)', color: 'var(--fg3)', border: '1px solid var(--border)', padding: '2px 10px', borderRadius: 20 }}>
+              {isAr ? tr.session.interviewModeLabel : tr.session.interviewModeLabel}:{' '}
+              {interviewMode === 'real'
+                ? (isAr ? tr.session.realModeLabel : tr.session.realModeLabel)
+                : (isAr ? tr.session.assistedModeLabel : tr.session.assistedModeLabel)}
+            </span>
           </div>
           <h1 style={{ margin: '0 0 8px', fontSize: 'clamp(22px,3vw,30px)', fontWeight: 800, letterSpacing: '-.02em' }}>
             {isAr ? 'تقرير الأداء' : 'Performance Report'}

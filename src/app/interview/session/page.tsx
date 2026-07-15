@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Mic, Square, RotateCcw, ArrowRight, Loader2, Volume2, VolumeX, RefreshCw } from 'lucide-react';
+import { Mic, Square, RotateCcw, ArrowRight, Loader2, Volume2, VolumeX, RefreshCw, Eye, EarOff } from 'lucide-react';
 import { useApp } from '@/lib/context';
 import { t } from '@/lib/i18n';
 import { transcribeAudio, fetchTTSAudio, countFillerWords, getAuthToken } from '@/lib/ai';
@@ -204,7 +204,7 @@ function useTTS(lang: string) {
 type Phase = 'speaking' | 'ready' | 'recording' | 'transcribing' | 'done';
 
 export default function InterviewSessionPage() {
-  const { lang, intLang, questions, answers, setAnswer, setAnswerMetrics } = useApp();
+  const { lang, intLang, questions, answers, setAnswer, setAnswerMetrics, interviewMode } = useApp();
   const tr = t(lang);
   const router = useRouter();
   const dir = lang === 'ar' ? 'rtl' : 'ltr';
@@ -213,6 +213,9 @@ export default function InterviewSessionPage() {
   const activeQuestions = questions.length === 5
     ? questions
     : (intLang === 'ar' ? FALLBACK_AR : FALLBACK_EN);
+
+  const isRealMode = interviewMode === 'real';
+  const [showQuestionText, setShowQuestionText] = useState(false);
 
   const [qIndex, setQIndex] = useState(0);
   const [phase, setPhase] = useState<Phase>('speaking');
@@ -232,6 +235,9 @@ export default function InterviewSessionPage() {
   const mountedRef = useRef(true);
 
   const tts = useTTS(intLang);
+
+  // Hide question text when moving to a new question in real mode
+  useEffect(() => { setShowQuestionText(false); }, [qIndex]);
 
   // Speak question when index changes
   useEffect(() => {
@@ -408,9 +414,15 @@ export default function InterviewSessionPage() {
 
       {/* Progress bar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 700, fontSize: 13.5, padding: '7px 14px', borderRadius: 20 }}>
-          <Mic size={16} />{tr.session.question} {qIndex + 1} {tr.session.of} 5
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 700, fontSize: 13.5, padding: '7px 14px', borderRadius: 20 }}>
+            <Mic size={16} />{tr.session.question} {qIndex + 1} {tr.session.of} 5
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--fg3)', fontWeight: 600, fontSize: 12, padding: '5px 11px', borderRadius: 20 }}>
+            {isRealMode ? <EarOff size={12} /> : <Eye size={12} />}
+            {isRealMode ? tr.session.realModeLabel : tr.session.assistedModeLabel}
+          </span>
+        </div>
         <div style={{ display: 'flex', gap: 6, flex: 1, maxWidth: 300 }}>
           {[0, 1, 2, 3, 4].map(i => (
             <div key={i} style={{ flex: 1, height: 5, borderRadius: 3, background: recorded[i] ? 'var(--accent)' : i === qIndex ? '#93c9f3' : 'var(--surface2)', transition: 'background .3s' }} />
@@ -450,9 +462,41 @@ export default function InterviewSessionPage() {
               <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: 'linear-gradient(90deg, var(--accent), #8b5cf6)', borderRadius: '20px 20px 0 0', animation: 'qslide 1.5s linear infinite' }} />
             )}
             <style>{`@keyframes qslide { 0%{opacity:1} 50%{opacity:.4} 100%{opacity:1} }`}</style>
-            <p style={{ margin: 0, fontSize: 'clamp(17px,2vw,22px)', fontWeight: 700, lineHeight: 1.5, color: 'var(--fg)' }}>
-              {activeQuestions[qIndex]}
-            </p>
+
+            {/* Real mode — question hidden unless user reveals or fallback kicks in */}
+            {isRealMode && !showQuestionText && !tts.ttsError && !tts.muted ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: '20px 0', textAlign: 'center' }}>
+                <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'var(--accent-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <EarOff size={24} style={{ color: 'var(--accent)' }} />
+                </div>
+                <div>
+                  <p style={{ margin: '0 0 4px', fontWeight: 700, fontSize: 15, color: 'var(--fg)' }}>
+                    {isAr ? 'المحاور يقرأ السؤال' : 'AI Interviewer is reading the question'}
+                  </p>
+                  <p style={{ margin: 0, fontSize: 13, color: 'var(--fg2)' }}>
+                    {isAr ? tr.session.listenCarefully : tr.session.listenCarefully}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* TTS error fallback banner inside card */}
+                {isRealMode && tts.ttsError && (
+                  <div style={{ marginBottom: 12, background: 'rgba(245,158,11,.1)', border: '1px solid rgba(245,158,11,.3)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#d97706' }}>
+                    {tr.session.audioFallback}
+                  </div>
+                )}
+                {/* Muted + real mode notice */}
+                {isRealMode && tts.muted && (
+                  <div style={{ marginBottom: 12, background: 'rgba(2,132,199,.08)', border: '1px solid rgba(2,132,199,.2)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: 'var(--fg2)' }}>
+                    {tr.session.voiceMutedRealMode}
+                  </div>
+                )}
+                <p style={{ margin: 0, fontSize: 'clamp(17px,2vw,22px)', fontWeight: 700, lineHeight: 1.5, color: 'var(--fg)' }}>
+                  {activeQuestions[qIndex]}
+                </p>
+              </>
+            )}
 
             {/* TTS controls */}
             <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
@@ -479,6 +523,15 @@ export default function InterviewSessionPage() {
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid rgba(239,68,68,.3)', background: 'rgba(239,68,68,.07)', color: '#ef4444', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, padding: '7px 14px', borderRadius: 9, cursor: 'pointer' }}>
                   <VolumeX size={13} />
                   {isAr ? 'إيقاف' : 'Stop'}
+                </button>
+              )}
+              {/* Real mode: optional reveal/hide question text */}
+              {isRealMode && !tts.ttsError && !tts.muted && (
+                <button
+                  onClick={() => setShowQuestionText(v => !v)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--fg3)', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: 9, cursor: 'pointer' }}>
+                  <Eye size={13} />
+                  {showQuestionText ? tr.session.hideQuestion : tr.session.showQuestion}
                 </button>
               )}
             </div>
@@ -595,6 +648,11 @@ export default function InterviewSessionPage() {
                     ? (isAr ? 'جارٍ التحميل…' : 'Loading voice…')
                     : (isAr ? 'المحاور يتحدث…' : 'Interviewer speaking…')}
                 </span>
+                {isRealMode && !tts.playBlocked && !tts.loading && (
+                  <span style={{ color: 'rgba(255,255,255,.75)', fontSize: 12, fontWeight: 600 }}>
+                    {tr.session.listenCarefully}
+                  </span>
+                )}
               </div>
             )}
             {phase === 'recording' && (

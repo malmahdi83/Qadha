@@ -5,6 +5,8 @@ import type { QuestionMetrics } from './ai';
 
 export type { QuestionMetrics };
 
+export type InterviewExperienceMode = 'real' | 'assisted';
+
 export interface InterviewResults {
   overall_score: number;
   communication: number;
@@ -42,6 +44,7 @@ interface AppState {
   setIntLang: (v: Lang) => void;
   // AI-generated questions & answers
   questions: string[];
+  lastQuestions: string[];
   setQuestions: (q: string[]) => void;
   answers: string[];
   setAnswer: (index: number, answer: string) => void;
@@ -53,6 +56,9 @@ interface AppState {
   setInterviewResults: (r: InterviewResults | null) => void;
   presResults: PresentationResults | null;
   setPresResults: (r: PresentationResults | null) => void;
+  // Interview experience mode
+  interviewMode: InterviewExperienceMode;
+  setInterviewMode: (m: InterviewExperienceMode) => void;
   // Reset
   resetInterview: () => void;
   // Presentation
@@ -75,7 +81,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [intLang, setIntLang] = useState<Lang>('en');
   const [topic, setTopic] = useState('');
   const [presTranscript, setPresTranscript] = useState('');
-  const [questions, setQuestions] = useState<string[]>([]);
+  const [questions, setQuestionsState] = useState<string[]>([]);
+  const [lastQuestions, setLastQuestionsState] = useState<string[]>([]);
+  const [interviewMode, setInterviewMode] = useState<InterviewExperienceMode>('assisted');
   const [answers, setAnswersState] = useState<string[]>(['', '', '', '', '']);
   const [answerMetrics, setAnswerMetricsState] = useState<(QuestionMetrics | null)[]>([null, null, null, null, null]);
   const [interviewResults, setInterviewResults] = useState<InterviewResults | null>(null);
@@ -87,6 +95,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const savedTheme = localStorage.getItem('qadha-theme') as 'light' | 'dark' | null;
     if (savedLang) setLangState(savedLang);
     if (savedTheme) setTheme(savedTheme);
+    try {
+      const saved = localStorage.getItem('qadha-last-questions');
+      if (saved) setLastQuestionsState(JSON.parse(saved));
+    } catch { /* ignore */ }
   }, []);
 
   useEffect(() => {
@@ -111,8 +123,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setAnswerMetricsState(prev => { const n = [...prev]; n[index] = metrics; return n; });
   };
 
+  const setQuestions = (q: string[]) => setQuestionsState(q);
+
   const resetInterview = () => {
-    setQuestions([]);
+    // Persist the just-completed session's questions so the next session can avoid repeating them
+    if (questions.length > 0) {
+      setLastQuestionsState(questions);
+      try { localStorage.setItem('qadha-last-questions', JSON.stringify(questions)); } catch { /* ignore */ }
+    }
+    setQuestionsState([]);
     setAnswersState(['', '', '', '', '']);
     setAnswerMetricsState([null, null, null, null, null]);
     setInterviewResults(null);
@@ -126,7 +145,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       topic, setTopic,
       presTranscript, setPresTranscript,
       presSpeechMetrics, setPresSpeechMetrics,
-      questions, setQuestions,
+      questions, lastQuestions, setQuestions,
+      interviewMode, setInterviewMode,
       answers, setAnswer,
       answerMetrics, setAnswerMetrics,
       interviewResults, setInterviewResults,

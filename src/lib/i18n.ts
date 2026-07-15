@@ -60,6 +60,10 @@ export const dict = {
     setup: {
       title: 'Set up your interview', sub: 'Qadha tailors every question to these details.',
       role: 'Job Role', edu: 'Education Level', exp: 'Experience Level', lang: 'Interview Language', cta: 'Generate Interview', back: 'Back',
+      expMode: 'Interview Experience Mode',
+      modeReal: 'Real Interview Mode', modeRealDesc: 'Questions are spoken by the AI interviewer and are not displayed as text.',
+      modeRealBadge: 'Recommended',
+      modeAssisted: 'Assisted Mode', modeAssistedDesc: 'Questions are spoken by the AI interviewer and also displayed on screen.',
       roles: [
         { id: 'dev', l: 'Software Developer' }, { id: 'pm', l: 'Project Manager' },
         { id: 'acc', l: 'Accountant' }, { id: 'hr', l: 'HR Specialist' },
@@ -80,6 +84,12 @@ export const dict = {
       camPrompt: 'Allow camera access to record your answer', enable: 'Enable Camera',
       recorded: 'Answer recorded', recordingNow: 'Recording…',
       tip: 'Tip: speak for 60–90 seconds and use a concrete example.',
+      listenCarefully: 'Listen carefully',
+      showQuestion: 'Show Question Text', hideQuestion: 'Hide Question Text',
+      audioFallback: 'Audio is temporarily unavailable. The question is shown below.',
+      voiceMutedRealMode: 'Voice is off — the question is shown so your interview can continue.',
+      realModeLabel: 'Real Interview', assistedModeLabel: 'Assisted',
+      interviewModeLabel: 'Interview Mode',
     },
     results: {
       kicker: 'Interview report', title: 'Here\'s how your interview went', sub: 'Strong session, Sara. You\'re trending up.',
@@ -201,6 +211,10 @@ export const dict = {
     setup: {
       title: 'جهّز مقابلتك', sub: 'يخصّص قضاء كل سؤال بناءً على هذه التفاصيل.',
       role: 'الوظيفة', edu: 'المستوى التعليمي', exp: 'مستوى الخبرة', lang: 'لغة المقابلة', cta: 'إنشاء المقابلة', back: 'رجوع',
+      expMode: 'نمط تجربة المقابلة',
+      modeReal: 'وضع المقابلة الواقعية', modeRealDesc: 'تُقرأ الأسئلة بصوت المحاور الذكي ولا تُعرض كنص.',
+      modeRealBadge: 'موصى به',
+      modeAssisted: 'الوضع المساعد', modeAssistedDesc: 'تُقرأ الأسئلة بصوت المحاور الذكي وتُعرض أيضًا على الشاشة.',
       roles: [
         { id: 'dev', l: 'مطوّر برمجيات' }, { id: 'pm', l: 'مدير مشاريع' },
         { id: 'acc', l: 'محاسب' }, { id: 'hr', l: 'أخصائي موارد بشرية' },
@@ -221,6 +235,12 @@ export const dict = {
       camPrompt: 'اسمح بالوصول إلى الكاميرا لتسجيل إجابتك', enable: 'تشغيل الكاميرا',
       recorded: 'تم تسجيل الإجابة', recordingNow: 'جارٍ التسجيل…',
       tip: 'نصيحة: تحدّث لمدة 60–90 ثانية واستخدم مثالًا محدّدًا.',
+      listenCarefully: 'استمع جيداً',
+      showQuestion: 'عرض نص السؤال', hideQuestion: 'إخفاء نص السؤال',
+      audioFallback: 'الصوت غير متاح مؤقتًا. السؤال معروض أدناه.',
+      voiceMutedRealMode: 'الصوت مكتوم — يُعرض السؤال حتى تتمكن من المتابعة.',
+      realModeLabel: 'مقابلة واقعية', assistedModeLabel: 'مساعد',
+      interviewModeLabel: 'وضع المقابلة',
     },
     results: {
       kicker: 'تقرير المقابلة', title: 'إليك كيف سارت مقابلتك', sub: 'جلسة قوية يا سارة، أداؤك في تحسّن.',

@@ -18,7 +18,7 @@ const EXP_LABELS: Record<string, string> = {
 };
 
 export default function LoadingPage() {
-  const { lang, role, education, experience, intLang, setQuestions, setInterviewResults } = useApp();
+  const { lang, role, education, experience, intLang, setQuestions, resetInterview, lastQuestions } = useApp();
   const tr = t(lang);
   const router = useRouter();
   const [progress, setProgress] = useState(0);
@@ -29,8 +29,8 @@ export default function LoadingPage() {
     if (calledRef.current) return;
     calledRef.current = true;
 
-    // Reset any previous results
-    setInterviewResults(null);
+    // Reset all previous session state before generating new questions
+    resetInterview();
 
     // Animate progress while AI generates questions
     let prog = 0;
@@ -44,6 +44,7 @@ export default function LoadingPage() {
       education: EDU_LABELS[education] ?? education,
       experience: EXP_LABELS[experience] ?? experience,
       lang: intLang,
+      previousQuestions: lastQuestions,
     })
       .then(questions => {
         clearInterval(interval);
@@ -84,7 +85,7 @@ export default function LoadingPage() {
     }, 20000);
 
     return () => { clearInterval(interval); clearTimeout(hardFallback); };
-  }, [role, education, experience, intLang, lang, setQuestions, setInterviewResults, router]);
+  }, [role, education, experience, intLang, lang, setQuestions, resetInterview, lastQuestions, router]);
 
   const r = 56;
   const C = 2 * Math.PI * r;

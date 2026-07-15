@@ -1,7 +1,8 @@
 'use client';
+import React from 'react';
 import { useRouter } from 'next/navigation';
-import { Mic, ArrowRight, Sparkles } from 'lucide-react';
-import { useApp } from '@/lib/context';
+import { Mic, ArrowRight, Sparkles, EarOff, Eye } from 'lucide-react';
+import { useApp, type InterviewExperienceMode } from '@/lib/context';
 import { t, type Lang } from '@/lib/i18n';
 
 function RadioOption({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
@@ -20,8 +21,37 @@ function RadioOption({ label, selected, onClick }: { label: string; selected: bo
   );
 }
 
+function ModeCard({ id, selected, label, desc, badge, icon, onClick }: {
+  id: InterviewExperienceMode; selected: boolean; label: string; desc: string;
+  badge?: string; icon: React.ReactNode; onClick: () => void;
+}) {
+  return (
+    <button onClick={onClick} style={{
+      display: 'flex', alignItems: 'flex-start', gap: 14, textAlign: 'start',
+      border: `1.5px solid ${selected ? 'var(--accent)' : 'var(--border)'}`,
+      background: selected ? 'var(--accent-soft)' : 'var(--surface)',
+      fontFamily: 'inherit', padding: '16px 18px', borderRadius: 14, cursor: 'pointer',
+      transition: 'all .15s', width: '100%', position: 'relative',
+    }}>
+      <div style={{ width: 38, height: 38, borderRadius: 10, background: selected ? 'var(--accent)' : 'var(--surface2)', color: selected ? '#fff' : 'var(--fg3)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all .15s' }}>
+        {icon}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 700, fontSize: 14.5, color: selected ? 'var(--accent)' : 'var(--fg)' }}>{label}</span>
+          {badge && (
+            <span style={{ fontSize: 11, fontWeight: 700, background: selected ? 'var(--accent)' : 'var(--surface2)', color: selected ? '#fff' : 'var(--fg3)', padding: '2px 8px', borderRadius: 20, letterSpacing: '.04em' }}>{badge}</span>
+          )}
+        </div>
+        <p style={{ margin: 0, fontSize: 13, color: selected ? 'var(--accent)' : 'var(--fg2)', lineHeight: 1.5, fontWeight: 400 }}>{desc}</p>
+      </div>
+      <span style={{ width: 18, height: 18, borderRadius: '50%', border: `2px solid ${selected ? 'var(--accent)' : 'var(--border)'}`, background: selected ? 'var(--accent)' : 'transparent', flexShrink: 0, boxShadow: 'inset 0 0 0 3px var(--surface)', display: 'inline-block', marginTop: 2 }} />
+    </button>
+  );
+}
+
 export default function InterviewSetupPage() {
-  const { lang, role, education, experience, intLang, setRole, setEducation, setExperience, setIntLang } = useApp();
+  const { lang, role, education, experience, intLang, interviewMode, setRole, setEducation, setExperience, setIntLang, setInterviewMode } = useApp();
   const tr = t(lang);
   const router = useRouter();
   const dir = lang === 'ar' ? 'rtl' : 'ltr';
@@ -92,6 +122,30 @@ export default function InterviewSetupPage() {
                 {o.l}
               </button>
             ))}
+          </div>
+        </div>
+
+        {/* Interview Experience Mode */}
+        <div>
+          <label style={{ display: 'block', fontWeight: 700, fontSize: 14.5, marginBottom: 12 }}>{tr.setup.expMode}</label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <ModeCard
+              id="real"
+              selected={interviewMode === 'real'}
+              label={tr.setup.modeReal}
+              desc={tr.setup.modeRealDesc}
+              badge={tr.setup.modeRealBadge}
+              icon={<EarOff size={18} />}
+              onClick={() => setInterviewMode('real')}
+            />
+            <ModeCard
+              id="assisted"
+              selected={interviewMode === 'assisted'}
+              label={tr.setup.modeAssisted}
+              desc={tr.setup.modeAssistedDesc}
+              icon={<Eye size={18} />}
+              onClick={() => setInterviewMode('assisted')}
+            />
           </div>
         </div>
       </div>
