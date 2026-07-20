@@ -98,8 +98,8 @@ function Bar({ label, value, max = 100, color = 'var(--accent)', tooltip }: {
 }
 
 function AccordionCard({
-  index, question, userAnswer, idealAnswer, lang,
-}: { index: number; question: string; userAnswer: string; idealAnswer: string; lang: string }) {
+  index, question, userAnswer, idealAnswer, lang, contentOnly,
+}: { index: number; question: string; userAnswer: string; idealAnswer: string; lang: string; contentOnly?: boolean }) {
   const [open, setOpen] = useState(false);
   const isAr = lang === 'ar';
   return (
@@ -109,11 +109,23 @@ function AccordionCard({
         style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 14, padding: '18px 22px', background: 'none', border: 'none', cursor: 'pointer', textAlign: isAr ? 'right' : 'left', fontFamily: 'inherit' }}>
         <div style={{ width: 32, height: 32, borderRadius: 9, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 14, flexShrink: 0 }}>{index + 1}</div>
         <span style={{ flex: 1, fontWeight: 600, fontSize: 15, color: 'var(--fg)', lineHeight: 1.4 }}>{question}</span>
+        {contentOnly && (
+          <span style={{ fontSize: 11, fontWeight: 700, background: 'rgba(245,158,11,.15)', color: '#d97706', border: '1px solid rgba(245,158,11,.3)', padding: '2px 8px', borderRadius: 12, flexShrink: 0, whiteSpace: 'nowrap' }}>
+            {isAr ? 'محتوى فقط' : 'Content Only'}
+          </span>
+        )}
         <ChevronDown size={18} style={{ color: 'var(--fg3)', transition: 'transform .2s', transform: open ? 'rotate(180deg)' : 'none', flexShrink: 0 }} />
       </button>
 
       {open && (
         <div style={{ padding: '0 22px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {contentOnly && (
+            <div style={{ background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.3)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#92400e', lineHeight: 1.55 }}>
+              {isAr
+                ? 'تم تقييم محتوى هذه الإجابة فقط لأن لغة الإجابة لم تتطابق مع لغة المقابلة المحددة. درجات اللغة والتواصل لم تُحتسب لهذه الإجابة. النص الأصلي محفوظ دون ترجمة.'
+                : 'This answer was evaluated for content only because the spoken language did not match the selected interview language. Language and communication scores were not applied to this answer. The original transcript is preserved without translation.'}
+            </div>
+          )}
           <div style={{ background: 'rgba(2,132,199,.07)', border: '1.5px solid rgba(2,132,199,.2)', borderRadius: 12, padding: '14px 16px' }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' }} />
@@ -461,6 +473,7 @@ export default function InterviewResultsPage() {
                 userAnswer={answers[i] || ''}
                 idealAnswer={r2.ideal_answers?.[i]?.ideal_answer ?? ''}
                 lang={lang}
+                contentOnly={contentOnlyAnswers[i]}
               />
             ))}
           </div>

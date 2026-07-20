@@ -146,8 +146,8 @@ Deno.serve(async (req: Request) => {
     const outForm = new FormData();
     outForm.append('file', audio, audio.name || 'recording.webm');
     outForm.append('model', 'whisper-large-v3');
-    outForm.append('language', lang);
-    // verbose_json returns segment-level timestamps for real pause detection
+    // Do NOT append 'language' — Whisper auto-detects the spoken language.
+    // Forcing it to the interview language causes Whisper to translate instead of transcribe.
     outForm.append('response_format', 'verbose_json');
 
     const response = await fetch(GROQ_URL, {
@@ -170,10 +170,19 @@ Deno.serve(async (req: Request) => {
     const transcript = (data.text ?? '').trim();
     const segments: Segment[] = Array.isArray(data.segments) ? data.segments : [];
 
+    // Groq verbose_json includes a top-level 'language' field with the ISO 639-1 code
+    // that Whisper auto-detected from the audio (e.g. 'ar', 'en', 'fr').
+    const groqLang = typeof data.language === 'string' ? data.language.toLowerCase().trim() : '';
+    let detectedLanguage: 'ar' | 'en' | 'mixed' | 'unknown';
+    if (groqLang === 'ar' || groqLang === 'arabic') detectedLanguage = 'ar';
+    else if (groqLang === 'en' || groqLang === 'english') detectedLanguage = 'en';
+    else if (groqLang) detectedLanguage = 'unknown'; // other language (not ar or en)
+    else detectedLanguage = 'unknown';
+
     const { pauseCount, avgPauseDuration, longestPauseDuration } = computePauseMetrics(segments);
 
     return new Response(
-      JSON.stringify({ transcript, pauseCount, avgPauseDuration, longestPauseDuration }),
+      JSON.stringify({ transcript, detectedLanguage, pauseCount, avgPauseDuration, longestPauseDuration }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 

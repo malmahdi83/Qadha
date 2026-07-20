@@ -190,7 +190,7 @@ export async function transcribeAudio(
   blob: Blob,
   lang: string,
   preToken?: string
-): Promise<{ transcript: string } & PauseMetrics> {
+): Promise<{ transcript: string; detectedLanguage: 'ar' | 'en' | 'mixed' | 'unknown' } & PauseMetrics> {
   const token = preToken ?? await getAuthToken();
   const form = new FormData();
   form.append('audio', blob, 'recording.webm');
@@ -209,12 +209,14 @@ export async function transcribeAudio(
   }
   const data = await res.json() as {
     transcript: string;
+    detectedLanguage?: 'ar' | 'en' | 'mixed' | 'unknown';
     pauseCount: number;
     avgPauseDuration: number;
     longestPauseDuration: number;
   };
   return {
     transcript: data.transcript ?? '',
+    detectedLanguage: data.detectedLanguage ?? 'unknown',
     pauseCount: data.pauseCount ?? 0,
     avgPauseDuration: data.avgPauseDuration ?? 0,
     longestPauseDuration: data.longestPauseDuration ?? 0,

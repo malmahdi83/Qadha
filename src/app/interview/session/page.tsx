@@ -227,6 +227,7 @@ export default function InterviewSessionPage() {
   const [pendingTranscript, setPendingTranscript] = useState<string | null>(null);
   const [pendingMetrics, setPendingMetrics] = useState<{ durationSeconds: number; wordCount: number; wpm: number; fillerWords: { word: string; count: number }[]; pauseCount: number; avgPauseDuration: number; longestPauseDuration: number } | null>(null);
   const [mismatchQIndex, setMismatchQIndex] = useState<number>(0);
+  const [mismatchDetectedLang, setMismatchDetectedLang] = useState<'ar' | 'en' | 'mixed' | 'unknown'>('unknown');
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const camStreamRef = useRef<MediaStream | null>(null);
@@ -319,28 +320,44 @@ export default function InterviewSessionPage() {
       const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
       setPhase(p => p === 'recording' || p === 'transcribing' ? 'transcribing' : p);
       try {
-        const { transcript, pauseCount, avgPauseDuration, longestPauseDuration } =
+        const { transcript, detectedLanguage: groqLang, pauseCount, avgPauseDuration, longestPauseDuration } =
           await transcribeAudio(blob, intLang, authToken);
         const trimmed = transcript.trim();
         const wordCount = trimmed ? trimmed.split(/\s+/).filter(Boolean).length : 0;
         const wpm = durationSeconds > 2 && wordCount > 0
           ? Math.round(wordCount / (durationSeconds / 60))
           : 0;
+        // Use interview language for filler-word counting (we're checking expected language fillers)
         const fillerWords = countFillerWords(trimmed, intLang);
         const metrics = {
           durationSeconds: parseFloat(durationSeconds.toFixed(1)),
           wordCount, wpm, fillerWords, pauseCount, avgPauseDuration, longestPauseDuration,
         };
 
-        // Language mismatch detection
-        const detectedLang = detectLanguage(trimmed);
-        const expectedLang = intLang === 'ar' ? 'ar' : 'en';
-        const isMismatch = trimmed.length > 5 && detectedLang !== 'mixed' && detectedLang !== expectedLang;
+        // Language mismatch detection.
+        // Strategy: Groq's auto-detected language is authoritative for 'ar'/'en'.
+        // Text-based detectLanguage() catches 'mixed' reliably (character ratio).
+        // We trigger a mismatch dialog on: wrong language OR mixed content.
+        const textLang = detectLanguage(trimmed);
+        const expectedLang: 'ar' | 'en' | 'mixed' | 'unknown' = intLang === 'ar' ? 'ar' : 'en';
+        let spokenLang: 'ar' | 'en' | 'mixed' | 'unknown';
+        if (textLang === 'mixed') {
+          spokenLang = 'mixed'; // text analysis most reliable for mixed detection
+        } else if (groqLang !== 'unknown') {
+          spokenLang = groqLang; // Groq's audio-level detection is authoritative
+        } else {
+          spokenLang = textLang; // fallback to text analysis
+        }
+
+        const spokenLangStr: string = spokenLang;
+        const isMismatch = trimmed.length > 5 &&
+          (spokenLangStr === 'mixed' || (spokenLangStr !== 'unknown' && spokenLangStr !== expectedLang));
 
         if (isMismatch) {
           setPendingTranscript(trimmed);
           setPendingMetrics(metrics);
           setMismatchQIndex(capturedIndex);
+          setMismatchDetectedLang(spokenLang);
           setQIndex(i => { if (i === capturedIndex) setPhase('mismatch'); return i; });
         } else {
           setAnswerMetrics(capturedIndex, metrics);
@@ -385,6 +402,7 @@ export default function InterviewSessionPage() {
   const handleMismatchRetry = () => {
     setPendingTranscript(null);
     setPendingMetrics(null);
+    setMismatchDetectedLang('unknown');
     setPhase('ready');
   };
 
@@ -612,50 +630,65 @@ export default function InterviewSessionPage() {
           )}
 
           {/* Language mismatch dialog */}
-          {phase === 'mismatch' && pendingTranscript != null && (
-            <div style={{ background: 'var(--surface)', border: '2px solid #f59e0b', borderRadius: 18, padding: '20px 20px', boxShadow: 'var(--shadow)' }}>
-              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 14 }}>
-                <span style={{ fontSize: 24, flexShrink: 0 }}>⚠️</span>
-                <div>
-                  <p style={{ margin: '0 0 6px', fontWeight: 800, fontSize: 15, color: 'var(--fg)' }}>
-                    {isAr ? 'تم اكتشاف اختلاف في اللغة' : 'Language mismatch detected'}
-                  </p>
-                  <p style={{ margin: 0, fontSize: 13.5, color: 'var(--fg2)', lineHeight: 1.55 }}>
-                    {isAr
-                      ? `المقابلة باللغة العربية، لكن إجابتك تبدو بالإنجليزية. كيف تريد المتابعة؟`
-                      : `This interview is in English, but your answer appears to be in Arabic. How would you like to proceed?`}
-                  </p>
+          {phase === 'mismatch' && pendingTranscript != null && (() => {
+            const detectedLabel = mismatchDetectedLang === 'ar'
+              ? (isAr ? 'عربية' : 'Arabic')
+              : mismatchDetectedLang === 'en'
+              ? (isAr ? 'إنجليزية' : 'English')
+              : (isAr ? 'مختلطة' : 'mixed');
+            const expectedLabel = intLang === 'ar'
+              ? (isAr ? 'العربية' : 'Arabic')
+              : (isAr ? 'الإنجليزية' : 'English');
+            const isMixed = mismatchDetectedLang === 'mixed';
+            return (
+              <div style={{ background: 'var(--surface)', border: '2px solid #f59e0b', borderRadius: 18, padding: '20px 20px', boxShadow: 'var(--shadow)' }}>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 14 }}>
+                  <span style={{ fontSize: 24, flexShrink: 0 }}>⚠️</span>
+                  <div>
+                    <p style={{ margin: '0 0 6px', fontWeight: 800, fontSize: 15, color: 'var(--fg)' }}>
+                      {isAr ? 'تم اكتشاف اختلاف في اللغة' : 'Language mismatch detected'}
+                    </p>
+                    <p style={{ margin: 0, fontSize: 13.5, color: 'var(--fg2)', lineHeight: 1.55 }}>
+                      {isMixed
+                        ? (isAr
+                          ? `تحتوي إجابتك على لغتين مختلطتين (عربية وإنجليزية). المقابلة بلغة ${expectedLabel}. كيف تريد المتابعة؟`
+                          : `Your answer contains mixed languages (Arabic and English). This interview is in ${expectedLabel}. How would you like to proceed?`)
+                        : (isAr
+                          ? `إجابتك بدت بلغة ${detectedLabel}، لكن المقابلة تُجرى بلغة ${expectedLabel}. كيف تريد المتابعة؟`
+                          : `Your answer was detected as ${detectedLabel}, but this interview is in ${expectedLabel}. How would you like to proceed?`)}
+                    </p>
+                  </div>
                 </div>
-              </div>
-              {/* Show detected transcript */}
-              <div style={{ background: 'var(--surface2)', borderRadius: 10, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: 'var(--fg2)', lineHeight: 1.6 }}>
-                <span style={{ fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--fg3)', display: 'block', marginBottom: 5 }}>
-                  {isAr ? 'إجابتك المُسجَّلة:' : 'Your recorded answer:'}
-                </span>
-                {pendingTranscript}
-              </div>
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                <button
-                  onClick={handleMismatchRetry}
-                  style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 14, padding: '12px 18px', borderRadius: 11, cursor: 'pointer' }}>
-                  <RotateCcw size={15} />
+                {/* Original transcript — never translated */}
+                <div style={{ background: 'var(--surface2)', borderRadius: 10, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: 'var(--fg2)', lineHeight: 1.6 }}>
+                  <span style={{ fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--fg3)', display: 'block', marginBottom: 5 }}>
+                    {isAr ? 'إجابتك المُسجَّلة (النص الأصلي):' : 'Your recorded answer (original, not translated):'}
+                  </span>
+                  {pendingTranscript}
+                </div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <button
+                    onClick={handleMismatchRetry}
+                    style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 14, padding: '12px 18px', borderRadius: 11, cursor: 'pointer' }}>
+                    <RotateCcw size={15} />
+                    {isAr
+                      ? `أعد التسجيل بـ${expectedLabel} ✓ (موصى به)`
+                      : `Retry and answer in ${expectedLabel} ✓ (Recommended)`}
+                  </button>
+                  <button
+                    onClick={handleMismatchContentOnly}
+                    style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--fg2)', fontFamily: 'inherit', fontWeight: 600, fontSize: 13, padding: '12px 18px', borderRadius: 11, cursor: 'pointer' }}>
+                    {isAr ? 'تقييم المحتوى فقط' : 'Continue — evaluate content only'}
+                  </button>
+                </div>
+                <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--fg3)', lineHeight: 1.5 }}>
                   {isAr
-                    ? `أعد التسجيل بالعربية ✓ (موصى به)`
-                    : `Retry and answer in English ✓ (Recommended)`}
-                </button>
-                <button
-                  onClick={handleMismatchContentOnly}
-                  style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--fg2)', fontFamily: 'inherit', fontWeight: 600, fontSize: 13, padding: '12px 18px', borderRadius: 11, cursor: 'pointer' }}>
-                  {isAr ? 'تقييم المحتوى فقط' : 'Continue — evaluate content only'}
-                </button>
+                    ? 'تقييم المحتوى فقط: يتجاهل درجات اللغة والتواصل، ويُقيِّم الأفكار والمنطق والبنية فحسب. النص الأصلي محفوظ دون ترجمة.'
+                    : 'Content-only evaluation skips language & communication scoring — your ideas, structure, and reasoning are evaluated. The original transcript is preserved without translation.'}
+                </p>
               </div>
-              <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--fg3)', lineHeight: 1.5 }}>
-                {isAr
-                  ? 'تقييم المحتوى فقط: يتجاهل درجات اللغة والتواصل، ويُقيِّم الأفكار والمنطق فحسب.'
-                  : 'Content-only evaluation skips language & communication scoring — only your ideas and structure are evaluated.'}
-              </p>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Transcript panel */}
           <div style={{ background: 'var(--surface)', border: `1.5px solid ${phase === 'recording' ? 'var(--accent)' : phase === 'transcribing' ? '#f59e0b' : 'var(--border)'}`, borderRadius: 16, padding: '14px 16px', minHeight: 90, transition: 'border-color .2s' }}>
