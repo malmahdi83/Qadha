@@ -2,16 +2,25 @@ import { createClient } from './supabase';
 
 const BASE = process.env.NEXT_PUBLIC_SUPABASE_URL + '/functions/v1';
 
-async function callEdge<T>(name: string, body: Record<string, unknown>): Promise<T> {
+export class AuthSessionExpiredError extends Error {
+  constructor() { super('Session expired. Please sign in again.'); this.name = 'AuthSessionExpiredError'; }
+}
+
+async function getValidSession() {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
-  const token = session?.access_token ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  if (!session) throw new AuthSessionExpiredError();
+  return session;
+}
+
+async function callEdge<T>(name: string, body: Record<string, unknown>): Promise<T> {
+  const session = await getValidSession();
 
   const res = await fetch(`${BASE}/${name}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
+      'Authorization': `Bearer ${session.access_token}`,
     },
     body: JSON.stringify(body),
   });
@@ -24,9 +33,8 @@ async function callEdge<T>(name: string, body: Record<string, unknown>): Promise
 }
 
 export async function getAuthToken(): Promise<string> {
-  const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
-  return session?.access_token ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  const session = await getValidSession();
+  return session.access_token;
 }
 
 export interface GenerateQuestionsParams {

@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { Presentation, Play, Square, Sparkles, Loader2, Mic, RotateCcw } from 'lucide-react';
 import { useApp } from '@/lib/context';
 import { t } from '@/lib/i18n';
-import { transcribeAudio, countFillerWords, getAuthToken, detectLanguage, QuestionMetrics } from '@/lib/ai';
+import { transcribeAudio, countFillerWords, getAuthToken, detectLanguage, QuestionMetrics, AuthSessionExpiredError } from '@/lib/ai';
 import { createClient } from '@/lib/supabase';
 
 function fmt(s: number) {
@@ -83,7 +83,14 @@ export default function PresentationRecordingPage() {
     chunksRef.current = [];
 
     // Capture auth token NOW while the session is guaranteed fresh (user just tapped Record)
-    const authToken = await getAuthToken();
+    let authToken: string;
+    try {
+      authToken = await getAuthToken();
+    } catch (err) {
+      if (err instanceof AuthSessionExpiredError) { router.replace('/auth/login'); return; }
+      setError(lang === 'ar' ? 'خطأ في المصادقة. يُرجى تسجيل الدخول مجددًا.' : 'Authentication error. Please sign in again.');
+      return;
+    }
 
     let audioStream: MediaStream;
     try {
@@ -167,6 +174,7 @@ export default function PresentationRecordingPage() {
         }
       } catch (err) {
         console.error('Transcription error:', err);
+        if (err instanceof AuthSessionExpiredError) { router.replace('/auth/login'); return; }
         setError(lang === 'ar' ? 'تعذّر تحويل الصوت إلى نص. حاول مجددًا.' : 'Could not transcribe audio. Please try again.');
       } finally {
         setTranscribing(false);

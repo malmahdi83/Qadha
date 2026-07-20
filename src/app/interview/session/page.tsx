@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { Mic, Square, RotateCcw, ArrowRight, Loader2, Volume2, VolumeX, RefreshCw, Eye, EarOff } from 'lucide-react';
 import { useApp } from '@/lib/context';
 import { t } from '@/lib/i18n';
-import { transcribeAudio, fetchTTSAudio, countFillerWords, getAuthToken, detectLanguage } from '@/lib/ai';
+import { transcribeAudio, fetchTTSAudio, countFillerWords, getAuthToken, detectLanguage, AuthSessionExpiredError } from '@/lib/ai';
 import { createClient } from '@/lib/supabase';
 
 function fmt(s: number) {
@@ -295,7 +295,14 @@ export default function InterviewSessionPage() {
     setTranscriptError('');
 
     // Capture auth token NOW while the session is guaranteed fresh (user just tapped Record)
-    const authToken = await getAuthToken();
+    let authToken: string;
+    try {
+      authToken = await getAuthToken();
+    } catch (err) {
+      if (err instanceof AuthSessionExpiredError) { router.replace('/auth/login'); return; }
+      setTranscriptError(isAr ? 'خطأ في المصادقة. يُرجى تسجيل الدخول مجددًا.' : 'Authentication error. Please sign in again.');
+      return;
+    }
 
     let audioStream: MediaStream;
     try {
@@ -367,7 +374,8 @@ export default function InterviewSessionPage() {
         }
       } catch (err) {
         console.error('Transcription error:', err);
-        setQIndex(i => { if (i === capturedIndex) { setTranscriptError(isAr ? 'تعذّر تحويل الصوت إلى نص. حاول مجددًا.' : 'Could not transcribe audio. Please try again.'); setPhase('ready'); } return i; });
+        if (err instanceof AuthSessionExpiredError) { router.replace('/auth/login'); return; }
+        setQIndex(i => { if (i === capturedIndex) { setTranscriptError(isAr ? 'انتهت جلستك. يُرجى تسجيل الدخول مجددًا.' : 'Could not transcribe audio. Please try again.'); setPhase('ready'); } return i; });
       }
     };
 
