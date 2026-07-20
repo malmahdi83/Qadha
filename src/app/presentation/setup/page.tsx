@@ -1,5 +1,5 @@
 'use client';
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Presentation, ArrowRight, Upload, Check, Loader } from 'lucide-react';
 import { useApp } from '@/lib/context';
@@ -10,11 +10,13 @@ const ALLOWED = ['application/pdf', 'application/vnd.openxmlformats-officedocume
 const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
 
 export default function PresentationSetupPage() {
-  const { lang, topic, setTopic } = useApp();
+  const { lang, topic, setTopic, resetPresentation } = useApp();
   const tr = t(lang);
   const router = useRouter();
   const dir = lang === 'ar' ? 'rtl' : 'ltr';
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { resetPresentation(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [uploaded, setUploaded] = useState('');
   const [uploading, setUploading] = useState(false);

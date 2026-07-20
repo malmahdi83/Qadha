@@ -1,10 +1,10 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Presentation, Play, Square, Sparkles, Loader2, Mic } from 'lucide-react';
+import { Presentation, Play, Square, Sparkles, Loader2, Mic, RotateCcw } from 'lucide-react';
 import { useApp } from '@/lib/context';
 import { t } from '@/lib/i18n';
-import { transcribeAudio, countFillerWords, getAuthToken } from '@/lib/ai';
+import { transcribeAudio, countFillerWords, getAuthToken, detectLanguage, QuestionMetrics } from '@/lib/ai';
 import { createClient } from '@/lib/supabase';
 
 function fmt(s: number) {
@@ -13,7 +13,7 @@ function fmt(s: number) {
 }
 
 export default function PresentationRecordingPage() {
-  const { lang, intLang, topic, setPresResults, setPresTranscript, setPresSpeechMetrics } = useApp();
+  const { lang, intLang, topic, setPresResults, setPresTranscript, setPresSpeechMetrics, presContentOnly, setPresContentOnly } = useApp();
   const tr = t(lang);
   const router = useRouter();
 
@@ -25,6 +25,12 @@ export default function PresentationRecordingPage() {
   const [elapsed, setElapsed] = useState(0);
   const [transcript, setTranscript] = useState('');
   const [error, setError] = useState('');
+
+  // Mismatch state
+  const [mismatchPhase, setMismatchPhase] = useState<'none' | 'mismatch'>('none');
+  const [pendingTranscript, setPendingTranscript] = useState<string | null>(null);
+  const [pendingMetrics, setPendingMetrics] = useState<QuestionMetrics | null>(null);
+  const [mismatchDetectedLang, setMismatchDetectedLang] = useState<'ar' | 'en' | 'mixed' | 'unknown'>('unknown');
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const camStreamRef = useRef<MediaStream | null>(null);
@@ -70,6 +76,10 @@ export default function PresentationRecordingPage() {
     setError('');
     setDone(false);
     setTranscript('');
+    setMismatchPhase('none');
+    setPendingTranscript(null);
+    setPendingMetrics(null);
+    setMismatchDetectedLang('unknown');
     chunksRef.current = [];
 
     // Capture auth token NOW while the session is guaranteed fresh (user just tapped Record)
@@ -97,15 +107,39 @@ export default function PresentationRecordingPage() {
       const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
       setTranscribing(true);
       try {
-        const { transcript: text, pauseCount, avgPauseDuration, longestPauseDuration } =
+        const { transcript: text, detectedLanguage: groqLang, pauseCount, avgPauseDuration, longestPauseDuration } =
           await transcribeAudio(blob, intLang, authToken);
         const trimmed = text.trim();
+
+        // Two-source language detection (same as interview)
+        const textLang = detectLanguage(trimmed);
+        const expectedLang: 'ar' | 'en' | 'mixed' | 'unknown' = intLang === 'ar' ? 'ar' : 'en';
+        let spokenLang: 'ar' | 'en' | 'mixed' | 'unknown';
+        if (textLang === 'mixed') {
+          spokenLang = 'mixed';
+        } else if (groqLang !== 'unknown') {
+          spokenLang = groqLang;
+        } else {
+          spokenLang = textLang;
+        }
+
+        // Filler detection uses the ACTUAL spoken language
+        let fillerWords: { word: string; count: number }[];
+        if (spokenLang === 'mixed') {
+          const arF = countFillerWords(trimmed, 'ar');
+          const enF = countFillerWords(trimmed, 'en');
+          const fMap: Record<string, number> = {};
+          [...arF, ...enF].forEach(f => { fMap[f.word] = (fMap[f.word] ?? 0) + f.count; });
+          fillerWords = Object.entries(fMap).map(([word, count]) => ({ word, count })).sort((a, b) => b.count - a.count);
+        } else {
+          fillerWords = countFillerWords(trimmed, spokenLang === 'ar' ? 'ar' : 'en');
+        }
+
         const wordCount = trimmed ? trimmed.split(/\s+/).filter(Boolean).length : 0;
         const wpm = durationSeconds > 2 && wordCount > 0
           ? Math.round(wordCount / (durationSeconds / 60))
           : 0;
-        const fillerWords = countFillerWords(trimmed, intLang);
-        setPresSpeechMetrics({
+        const metrics: QuestionMetrics = {
           durationSeconds: parseFloat(durationSeconds.toFixed(1)),
           wordCount,
           wpm,
@@ -113,10 +147,24 @@ export default function PresentationRecordingPage() {
           pauseCount,
           avgPauseDuration,
           longestPauseDuration,
-        });
-        setTranscript(trimmed);
-        setPresTranscript(trimmed);
-        setDone(true);
+        };
+
+        const spokenLangStr: string = spokenLang;
+        const isMismatch = trimmed.length > 5 &&
+          (spokenLangStr === 'mixed' || (spokenLangStr !== 'unknown' && spokenLangStr !== expectedLang));
+
+        if (isMismatch) {
+          setPendingTranscript(trimmed);
+          setPendingMetrics(metrics);
+          setMismatchDetectedLang(spokenLang);
+          setMismatchPhase('mismatch');
+        } else {
+          setPresSpeechMetrics(metrics);
+          setTranscript(trimmed);
+          setPresTranscript(trimmed);
+          setPresContentOnly(false);
+          setDone(true);
+        }
       } catch (err) {
         console.error('Transcription error:', err);
         setError(lang === 'ar' ? 'تعذّر تحويل الصوت إلى نص. حاول مجددًا.' : 'Could not transcribe audio. Please try again.');
@@ -146,11 +194,36 @@ export default function PresentationRecordingPage() {
     else startRecording();
   };
 
+  const handleMismatchRetry = () => {
+    setPendingTranscript(null);
+    setPendingMetrics(null);
+    setMismatchDetectedLang('unknown');
+    setMismatchPhase('none');
+  };
+
+  const handleMismatchContentOnly = () => {
+    if (!pendingTranscript || !pendingMetrics) return;
+    setPresSpeechMetrics(pendingMetrics);
+    setTranscript(pendingTranscript);
+    setPresTranscript(pendingTranscript);
+    setPresContentOnly(true);
+    setPendingTranscript(null);
+    setPendingMetrics(null);
+    setMismatchDetectedLang('unknown');
+    setMismatchPhase('none');
+    setDone(true);
+  };
+
   const reRecord = () => {
     setDone(false);
     setTranscript('');
     setPresTranscript('');
     setPresSpeechMetrics(null);
+    setPresContentOnly(false);
+    setMismatchPhase('none');
+    setPendingTranscript(null);
+    setPendingMetrics(null);
+    setMismatchDetectedLang('unknown');
     setError('');
   };
 
@@ -160,6 +233,22 @@ export default function PresentationRecordingPage() {
     setPresResults(null);
     router.push('/presentation/results');
   };
+
+  // Language label helpers
+  const langLabel = (l: 'ar' | 'en' | 'mixed' | 'unknown') => {
+    if (lang === 'ar') {
+      if (l === 'ar') return 'العربية';
+      if (l === 'en') return 'الإنجليزية';
+      if (l === 'mixed') return 'مختلطة';
+      return 'غير معروفة';
+    }
+    if (l === 'ar') return 'Arabic';
+    if (l === 'en') return 'English';
+    if (l === 'mixed') return 'Mixed';
+    return 'Unknown';
+  };
+
+  const expectedLangLabel = intLang === 'ar' ? langLabel('ar') : langLabel('en');
 
   return (
     <section style={{ maxWidth: 920, margin: '0 auto', padding: 'clamp(24px,4vw,48px) clamp(16px,4vw,40px)' }}>
@@ -213,6 +302,59 @@ export default function PresentationRecordingPage() {
           <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.65, color: error ? '#ef4444' : 'var(--fg)' }}>
             {error || transcript || (lang === 'ar' ? 'جارٍ المعالجة…' : 'Processing…')}
           </p>
+          {done && presContentOnly && (
+            <div style={{ marginTop: 8, fontSize: 12, color: '#d97706', fontWeight: 600 }}>
+              {lang === 'ar' ? '⚠️ تقييم محتوى فقط (لغة مختلفة)' : '⚠️ Content-only evaluation (language mismatch)'}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Language mismatch dialog */}
+      {mismatchPhase === 'mismatch' && (
+        <div style={{ background: 'var(--surface)', border: '2px solid #f59e0b', borderRadius: 18, padding: '24px 26px', marginBottom: 20, boxShadow: 'var(--shadow)' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 16 }}>
+            <span style={{ fontSize: 26, flexShrink: 0 }}>⚠️</span>
+            <div>
+              <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: '#d97706' }}>
+                {lang === 'ar' ? 'تم اكتشاف تعارض في اللغة' : 'Language Mismatch Detected'}
+              </h3>
+              <p style={{ margin: 0, fontSize: 14, color: 'var(--fg2)', lineHeight: 1.55 }}>
+                {lang === 'ar'
+                  ? `اللغة المحددة للعرض: ${expectedLangLabel} — اللغة المكتشفة في التسجيل: ${langLabel(mismatchDetectedLang)}`
+                  : `Selected presentation language: ${expectedLangLabel} — Detected in recording: ${langLabel(mismatchDetectedLang)}`}
+              </p>
+            </div>
+          </div>
+
+          {pendingTranscript && (
+            <div style={{ background: 'var(--surface2)', borderRadius: 12, padding: '12px 16px', marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--fg3)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 6 }}>
+                {lang === 'ar' ? 'نص العرض المُسجَّل (الأصلي، غير مترجم):' : 'Your recorded presentation (original, not translated):'}
+              </div>
+              <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: 'var(--fg)', maxHeight: 120, overflowY: 'auto' }}>{pendingTranscript}</p>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+            <button
+              onClick={handleMismatchRetry}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: 'none', background: '#8b5cf6', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 14, padding: '12px 20px', borderRadius: 12, cursor: 'pointer' }}>
+              <RotateCcw size={15} />
+              {lang === 'ar' ? 'إعادة التسجيل (موصى به)' : 'Retry Recording (Recommended)'}
+            </button>
+            <button
+              onClick={handleMismatchContentOnly}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--fg)', fontFamily: 'inherit', fontWeight: 600, fontSize: 14, padding: '12px 20px', borderRadius: 12, cursor: 'pointer' }}>
+              {lang === 'ar' ? 'تقييم المحتوى فقط' : 'Evaluate Content Only'}
+            </button>
+          </div>
+
+          <p style={{ margin: 0, fontSize: 12.5, color: 'var(--fg3)', lineHeight: 1.5 }}>
+            {lang === 'ar'
+              ? 'تقييم المحتوى فقط يعني أن الذكاء الاصطناعي سيُقيّم أفكارك وبنيتك ووضوح رسالتك دون الأخذ بعين الاعتبار جودة اللغة.'
+              : 'Content-only evaluation means the AI will assess your ideas, structure, and message clarity without penalizing language quality.'}
+          </p>
         </div>
       )}
 
@@ -232,7 +374,7 @@ export default function PresentationRecordingPage() {
           {recording ? tr.session.stop : tr.session.record}
         </button>
 
-        {done && !recording && (
+        {(done || mismatchPhase === 'mismatch') && !recording && (
           <button onClick={reRecord} style={{ display: 'inline-flex', alignItems: 'center', gap: 9, border: '1px solid rgba(139,92,246,.4)', background: 'transparent', color: '#8b5cf6', fontFamily: 'inherit', fontWeight: 600, fontSize: 14, padding: '14px 18px', borderRadius: 13, cursor: 'pointer' }}>
             {lang === 'ar' ? 'إعادة التسجيل' : 'Re-record'}
           </button>
@@ -246,7 +388,7 @@ export default function PresentationRecordingPage() {
         </button>
       </div>
 
-      {!done && !recording && !transcribing && (
+      {!done && !recording && !transcribing && mismatchPhase === 'none' && (
         <p style={{ margin: '12px 0 0', fontSize: 13, color: 'var(--fg3)', textAlign: 'center' }}>
           {lang === 'ar' ? 'سجّل عرضك أولاً للمتابعة' : 'Record your presentation first to continue'}
         </p>

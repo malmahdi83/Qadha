@@ -114,6 +114,7 @@ export interface AnalyzePresentationParams {
   topic: string;
   transcript: string;
   speechMetrics: SpeechSummary & { durationSeconds: number };
+  contentOnly?: boolean;
 }
 
 export async function analyzePerformance<T>(
@@ -157,6 +158,17 @@ export async function saveSession(row: SessionRow): Promise<string | null> {
   const { data, error } = await supabase.from('sessions').insert(row).select('id').single();
   if (error) { console.error('saveSession error:', error); return null; }
   return data?.id ?? null;
+}
+
+export async function getSession(id: string): Promise<SessionRow | null> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('sessions')
+    .select('*')
+    .eq('id', id)
+    .single();
+  if (error) { console.error('getSession error:', error); return null; }
+  return (data ?? null) as SessionRow | null;
 }
 
 export async function getSessions(): Promise<SessionRow[]> {

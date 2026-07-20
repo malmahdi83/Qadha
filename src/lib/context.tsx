@@ -26,6 +26,21 @@ export interface PresentationResults {
   communication_effectiveness: number;
   ai_feedback: string;
   recommendations: { title: string; description: string }[];
+  // NEW optional fields:
+  strengths?: string[];
+  improvements?: string[];
+  score_reasons?: {
+    confidence?: string;
+    structure?: string;
+    communication_effectiveness?: string;
+  };
+  structure_review?: {
+    opening: { score: number; feedback: string; suggestions: string };
+    body: { score: number; feedback: string; suggestions: string };
+    transitions: { score: number; feedback: string; suggestions: string };
+    conclusion: { score: number; feedback: string; suggestions: string };
+  };
+  content_only?: boolean;
 }
 
 interface AppState {
@@ -71,6 +86,11 @@ interface AppState {
   setPresTranscript: (v: string) => void;
   presSpeechMetrics: QuestionMetrics | null;
   setPresSpeechMetrics: (m: QuestionMetrics | null) => void;
+  presContentOnly: boolean;
+  setPresContentOnly: (v: boolean) => void;
+  presSessionId: string | null;
+  setPresSessionId: (id: string | null) => void;
+  resetPresentation: () => void;
 }
 
 const AppContext = createContext<AppState | null>(null);
@@ -93,6 +113,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [interviewResults, setInterviewResults] = useState<InterviewResults | null>(null);
   const [presResults, setPresResults] = useState<PresentationResults | null>(null);
   const [presSpeechMetrics, setPresSpeechMetrics] = useState<QuestionMetrics | null>(null);
+  const [presContentOnly, setPresContentOnly] = useState(false);
+  const [presSessionId, setPresSessionId] = useState<string | null>(null);
 
   useEffect(() => {
     const savedLang = localStorage.getItem('qadha-lang') as Lang | null;
@@ -133,6 +155,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const setQuestions = (q: string[]) => setQuestionsState(q);
 
+  const resetPresentation = () => {
+    setTopic('');
+    setPresTranscript('');
+    setPresResults(null);
+    setPresSpeechMetrics(null);
+    setPresContentOnly(false);
+    setPresSessionId(null);
+  };
+
   const resetInterview = () => {
     if (questions.length > 0) {
       setLastQuestionsState(questions);
@@ -161,6 +192,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       interviewResults, setInterviewResults,
       presResults, setPresResults,
       resetInterview,
+      presContentOnly, setPresContentOnly,
+      presSessionId, setPresSessionId,
+      resetPresentation,
     }}>
       {children}
     </AppContext.Provider>

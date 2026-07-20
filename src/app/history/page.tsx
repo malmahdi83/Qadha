@@ -73,7 +73,7 @@ export default function HistoryPage() {
               </div>
               <div style={{ fontSize: 28, fontWeight: 800, color: scoreColor, flexShrink: 0 }}>{score}</div>
               <Link
-                href={isInterview ? '/interview/results' : '/presentation/results'}
+                href={isInterview ? '/interview/results' : `/presentation/results?session=${session.id ?? ''}`}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg)', fontWeight: 600, fontSize: 13.5, padding: '9px 16px', borderRadius: 10, textDecoration: 'none', flexShrink: 0, transition: 'border-color .15s, color .15s' }}
                 onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = 'var(--accent)'; el.style.color = 'var(--accent)'; }}
                 onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = ''; el.style.color = ''; }}>

@@ -226,6 +226,7 @@ Return ONLY valid JSON, all values must reflect actual answer quality:
     } else if (mode === 'presentation') {
       const topic = sanitize(body.topic, 200);
       const transcript = sanitize(body.transcript, 8000);
+      const contentOnly = body.contentOnly === true;
 
       if (!transcript || transcript.trim().length < 10) {
         return new Response(
@@ -234,31 +235,84 @@ Return ONLY valid JSON, all values must reflect actual answer quality:
         );
       }
 
-      systemPrompt = `You are an expert presentation coach and analyst. Analyze the speaker's actual transcript carefully and return valid JSON only, no markdown, no extra text. Base ALL scores on the real content of what was said.
+      // Compute word count and duration from speech metrics for rubric enforcement
+      const transcriptWordCount = transcript.trim().split(/\s+/).filter(Boolean).length;
+      const durationSec: number | null = typeof sm.durationSeconds === 'number' ? sm.durationSeconds : null;
 
-For "confidence" (delivery confidence estimate 0-100): use the MEASURED SPEECH DATA provided — pace vs ideal range (130-160 WPM for presentations), filler word density, pause frequency — along with structure quality and clarity. Do NOT re-estimate any speech values.`;
+      const contentOnlyNote = contentOnly
+        ? '\nIMPORTANT: This presentation was recorded in a different language than the selected presentation language. Evaluate CONTENT ONLY: structure, organization, clarity, message, relevance. Do NOT evaluate English/Arabic fluency, grammar, or pronunciation. Do NOT score communication_effectiveness based on language quality — only on message clarity and content.\n'
+        : '';
+
+      systemPrompt = `You are a strict, professional presentation coach. You evaluate recorded presentations honestly and directly, like a real coach preparing someone for a professional or academic setting.
+
+SCORING RUBRIC — follow exactly:
+0–15: Empty, no content, completely off-topic, or incoherent
+16–35: Very weak — extremely short (<30 words), no structure, generic/irrelevant ideas
+36–55: Basic — some relevant ideas, weak organization, limited examples, missing introduction or conclusion
+56–75: Good — clear topic, logical flow, reasonable supporting details, identifiable structure
+76–90: Strong — well organized, clear introduction/body/conclusion, good transitions, effective delivery
+91–100: Excellent — professional structure, engaging, compelling examples, memorable conclusion, polished delivery
+
+CRITICAL RULES:
+1. Be brutally honest. Do NOT inflate scores to be encouraging.
+2. Under 30 words → overall_score MUST be below 30. Under 80 words → below 45. Under 150 words → below 60.
+3. Off-topic presentations → communication_effectiveness MUST be below 30.
+4. strengths: ONLY list if clearly supported by the actual transcript or speech data. If the presentation is weak, write exactly: ["No clear strengths could be identified from this presentation."]
+5. improvements: be specific and actionable, tied to actual weaknesses observed.
+6. score_reasons: explain in 1–2 honest sentences WHY each score was given. Reference specific evidence from the transcript.
+7. structure_review: evaluate each section as a professional coach would — be specific, quote or reference what the speaker actually said.
+8. ai_feedback: 2–4 sentences of direct, honest coaching. Name specific weaknesses. Do NOT pad with generic praise.
+9. Return valid JSON only, no markdown, no extra text.${contentOnlyNote}`;
+
+      const metricsSummary = [
+        durationSec !== null ? `Duration: ${Math.round(durationSec)} seconds (${Math.round(durationSec / 60 * 10) / 10} min)` : null,
+        `Word count: ${transcriptWordCount} words`,
+        wpmLine,
+        pauseLine,
+        fillerLine,
+      ].filter(Boolean).join('\n');
 
       userPrompt = isArabic
-        ? `قيّم هذا العرض التقديمي الفعلي حول: "${topic}"
+        ? `أنت مدرّب عروض تقديمية محترف وصارم. قيّم هذا العرض الفعلي حول موضوع: "${topic}"
 
 ${speechMetricsBlock}
-
+مدة التسجيل: ${durationSec !== null ? `${Math.round(durationSec)} ثانية` : 'غير متاح'}
+عدد الكلمات: ${transcriptWordCount} كلمة
+${contentOnlyNote}
 النص الكامل للعرض:
 "${transcript}"
 
-حلّل المحتوى الفعلي: البنية، الوضوح، فاعلية التواصل. لا تُقدّر وتيرة الكلام أو التوقفات — فهي مقدّمة أعلاه من التسجيل الفعلي.
+تعليمات صارمة:
+1. اتبع مقياس التقييم بدقة — لا ترفع الدرجات.
+2. أقل من 30 كلمة: overall_score أقل من 30. أقل من 80 كلمة: أقل من 45. أقل من 150 كلمة: أقل من 60.
+3. موضوع غير ذي صلة: communication_effectiveness أقل من 30.
+4. نقاط القوة: اذكرها فقط إذا كانت مدعومة بوضوح من النص أو بيانات الكلام. إذا كان العرض ضعيفاً اكتب بالضبط: ["لم تتضح نقاط قوة واضحة من هذا العرض."]
+5. تقييم البنية: قيّم كل قسم (المقدمة، الجسم، الانتقالات، الخاتمة) كمدرب محترف — كن محدداً واستشهد بما قاله المتحدث فعلاً.
+6. score_reasons: اشرح بجملة أو جملتين لماذا أعطيت هذه الدرجة بالاستناد إلى النص.
+7. ai_feedback: 2-4 جمل من التغذية الراجعة الصادقة والمباشرة — سمّ نقاط الضعف تحديداً.
+
 أعد JSON فقط:
-{"overall_score":0,"confidence":0,"structure":0,"communication_effectiveness":0,"ai_feedback":"تقييم مخصص بناءً على النص والبيانات الصوتية الفعلية.","recommendations":[{"title":"عنوان1","description":"وصف1"},{"title":"عنوان2","description":"وصف2"},{"title":"عنوان3","description":"وصف3"}]}`
-        : `Evaluate this ACTUAL presentation on: "${topic}"
+{"overall_score":0,"confidence":0,"structure":0,"communication_effectiveness":0,"strengths":["نقطة قوة حقيقية مدعومة بالنص أو الجملة الثابتة"],"improvements":["تحسين محدد 1","تحسين محدد 2","تحسين محدد 3"],"score_reasons":{"confidence":"سبب الدرجة...","structure":"سبب الدرجة...","communication_effectiveness":"سبب الدرجة..."},"structure_review":{"opening":{"score":0,"feedback":"تقييم المقدمة...","suggestions":"اقتراحات..."},"body":{"score":0,"feedback":"تقييم الجسم...","suggestions":"اقتراحات..."},"transitions":{"score":0,"feedback":"تقييم الانتقالات...","suggestions":"اقتراحات..."},"conclusion":{"score":0,"feedback":"تقييم الخاتمة...","suggestions":"اقتراحات..."}},"ai_feedback":"تغذية راجعة مباشرة وصادقة تسمي نقاط الضعف تحديداً.","recommendations":[{"title":"توصية محددة 1","description":"نصيحة عملية 1"},{"title":"توصية محددة 2","description":"نصيحة عملية 2"},{"title":"توصية محددة 3","description":"نصيحة عملية 3"}]}`
+        : `You are a strict, professional presentation coach. Evaluate this ACTUAL recorded presentation on: "${topic}"
 
 ${speechMetricsBlock}
-
-Full transcript:
+${metricsSummary}
+${contentOnlyNote}
+Full transcript (${transcriptWordCount} words):
 "${transcript}"
 
-Analyze real content: structure, clarity, communication effectiveness. Do NOT re-estimate speaking pace or pauses — they are provided above from the actual recording.
-Return ONLY valid JSON:
-{"overall_score":0,"confidence":0,"structure":0,"communication_effectiveness":0,"ai_feedback":"Personalized 2-3 sentence feedback based on the actual transcript and speech data.","recommendations":[{"title":"Title1","description":"Description1"},{"title":"Title2","description":"Description2"},{"title":"Title3","description":"Description3"}]}`;
+STRICT EVALUATION RULES — follow exactly:
+1. Apply the scoring rubric. Do NOT inflate scores.
+2. Under 30 words → overall_score MUST be below 30. Under 80 words → below 45. Under 150 words → below 60.
+3. Off-topic → communication_effectiveness MUST be below 30.
+4. strengths: ONLY list if clearly supported by transcript or speech data. If weak, return exactly: ["No clear strengths could be identified from this presentation."]
+5. improvements: specific and actionable, tied to observed weaknesses.
+6. score_reasons: 1–2 honest sentences explaining WHY each score. Reference specific evidence.
+7. structure_review: evaluate each section like a professional coach. Be specific — reference what was actually said.
+8. ai_feedback: 2–4 direct coaching sentences. Name specific weaknesses. No generic praise.
+9. Return ONLY valid JSON:
+
+{"overall_score":0,"confidence":0,"structure":0,"communication_effectiveness":0,"strengths":["Genuine strength from transcript/data, or the fixed no-strengths message"],"improvements":["Specific improvement 1 tied to actual weakness","Specific improvement 2","Specific improvement 3"],"score_reasons":{"confidence":"Why this score — reference pace/fillers/pauses...","structure":"Why this score — reference intro/body/conclusion...","communication_effectiveness":"Why this score — reference clarity/relevance..."},"structure_review":{"opening":{"score":0,"feedback":"What was actually said in the opening and how effective it was.","suggestions":"One specific way to improve the opening."},"body":{"score":0,"feedback":"How the body was organized, what examples were used.","suggestions":"One specific improvement for the body."},"transitions":{"score":0,"feedback":"How smoothly ideas connected.","suggestions":"One specific improvement for transitions."},"conclusion":{"score":0,"feedback":"How the presentation ended.","suggestions":"One specific improvement for the conclusion."}},"ai_feedback":"Direct 2-4 sentence coaching feedback naming specific weaknesses.","recommendations":[{"title":"Specific rec 1","description":"Practical advice 1"},{"title":"Specific rec 2","description":"Practical advice 2"},{"title":"Specific rec 3","description":"Practical advice 3"}]}`;
 
     } else {
       return new Response(

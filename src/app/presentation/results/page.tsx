@@ -3,8 +3,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, RotateCcw, Loader2, AlertCircle } from 'lucide-react';
 import { useApp, PresentationResults } from '@/lib/context';
+import type { QuestionMetrics } from '@/lib/context';
 import { t } from '@/lib/i18n';
-import { analyzePerformance, saveSession } from '@/lib/ai';
+import { analyzePerformance, saveSession, getSession } from '@/lib/ai';
 
 const VIOLET = '#8b5cf6';
 const VIOLET_SOFT = 'rgba(139,92,246,.1)';
@@ -28,8 +29,8 @@ function ScoreGauge({ score }: { score: number }) {
   );
 }
 
-function Bar({ label, value, color = VIOLET, tooltip }: {
-  label: string; value: number; color?: string; tooltip?: string;
+function Bar({ label, value, color = VIOLET, tooltip, reason }: {
+  label: string; value: number; color?: string; tooltip?: string; reason?: string;
 }) {
   return (
     <div>
@@ -45,12 +46,18 @@ function Bar({ label, value, color = VIOLET, tooltip }: {
       <div style={{ height: 8, borderRadius: 4, background: 'var(--surface2)', overflow: 'hidden' }}>
         <div style={{ width: `${value}%`, height: '100%', background: color, borderRadius: 4, transition: 'width 1s ease' }} />
       </div>
+      {reason && (
+        <p style={{ margin: '6px 0 0', fontSize: 12.5, color: 'var(--fg3)', lineHeight: 1.5 }}>{reason}</p>
+      )}
     </div>
   );
 }
 
 export default function PresentationResultsPage() {
-  const { lang, topic, intLang, presTranscript, presSpeechMetrics, presResults, setPresResults } = useApp();
+  const {
+    lang, topic, intLang, presTranscript, setPresTranscript, presSpeechMetrics, setPresSpeechMetrics,
+    presResults, setPresResults, presContentOnly,
+  } = useApp();
   const tr = t(lang);
   const router = useRouter();
   const calledRef = useRef(false);
@@ -59,6 +66,41 @@ export default function PresentationResultsPage() {
   const [error, setError] = useState('');
 
   const isAr = lang === 'ar';
+
+  // Load from DB when coming from history (session ID in URL, no live context state)
+  useEffect(() => {
+    if (presResults || presTranscript) return; // already have live data
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get('session');
+    if (!sessionId) return;
+    setLoading(true);
+    getSession(sessionId).then(row => {
+      if (!row) { setLoading(false); return; }
+      if (row.transcript) setPresTranscript(row.transcript);
+      if (row.answers && typeof row.answers === 'object') {
+        try { setPresSpeechMetrics(row.answers as QuestionMetrics); } catch { /* ignore */ }
+      }
+      const reconstructed: PresentationResults = {
+        overall_score: row.score_overall ?? 0,
+        confidence: row.score_confidence ?? 0,
+        structure: row.score_structure ?? 0,
+        communication_effectiveness: row.score_comm_effectiveness ?? 0,
+        ai_feedback: row.ai_feedback ?? '',
+        recommendations: Array.isArray(row.recommendations) ? row.recommendations as { title: string; description: string }[] : [],
+        strengths: Array.isArray(row.strengths) ? row.strengths as string[] : undefined,
+        improvements: Array.isArray(row.improvements) ? row.improvements as string[] : undefined,
+        structure_review: row.ideal_answers && typeof row.ideal_answers === 'object' && !Array.isArray(row.ideal_answers)
+          ? row.ideal_answers as PresentationResults['structure_review']
+          : undefined,
+        score_reasons: row.questions && typeof row.questions === 'object' && !Array.isArray(row.questions)
+          ? row.questions as PresentationResults['score_reasons']
+          : undefined,
+      };
+      setPresResults(reconstructed);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (presResults || calledRef.current) { setLoading(false); return; }
@@ -69,6 +111,7 @@ export default function PresentationResultsPage() {
       lang: intLang,
       topic: topic || 'General presentation',
       transcript: presTranscript || '',
+      contentOnly: presContentOnly,
       speechMetrics: presSpeechMetrics
         ? {
             avgWpm: presSpeechMetrics.wpm,
@@ -115,7 +158,12 @@ export default function PresentationResultsPage() {
       filler_words: presSpeechMetrics?.fillerWords ?? [],
       long_pauses: presSpeechMetrics?.pauseCount ?? undefined,
       ai_feedback: presResults.ai_feedback,
+      strengths: presResults.strengths,
+      improvements: presResults.improvements,
       recommendations: presResults.recommendations,
+      ideal_answers: presResults.structure_review,
+      questions: presResults.score_reasons,
+      answers: presSpeechMetrics ?? undefined,
     }).catch(console.error);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [presResults]);
@@ -162,8 +210,17 @@ export default function PresentationResultsPage() {
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 24, padding: 'clamp(24px,4vw,48px)', boxShadow: 'var(--shadow)', marginBottom: 24, display: 'flex', gap: 40, alignItems: 'center', flexWrap: 'wrap' }}>
         <ScoreGauge score={p.overall_score} />
         <div style={{ flex: 1, minWidth: 220 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.08em', color: VIOLET, textTransform: 'uppercase', marginBottom: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.08em', color: VIOLET, textTransform: 'uppercase', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             {isAr ? 'نتيجة العرض' : 'Presentation Score'}
+            {presContentOnly && (
+              <span
+                title={isAr
+                  ? 'تم تقييم محتوى هذا العرض فقط لأن لغة التقديم لم تتطابق مع اللغة المحددة.'
+                  : 'This presentation was evaluated for content only because the spoken language did not match the selected language.'}
+                style={{ fontSize: 11, fontWeight: 700, background: 'rgba(245,158,11,.15)', color: '#d97706', border: '1px solid rgba(245,158,11,.35)', padding: '2px 10px', borderRadius: 20, cursor: 'help', textTransform: 'none', letterSpacing: 'normal' }}>
+                {isAr ? 'تقييم محتوى فقط ⓘ' : 'Content Only Evaluation ⓘ'}
+              </span>
+            )}
           </div>
           <h1 style={{ margin: '0 0 8px', fontSize: 'clamp(22px,3vw,30px)', fontWeight: 800, letterSpacing: '-.02em' }}>
             {isAr ? 'تقرير الأداء' : 'Performance Report'}
@@ -200,9 +257,20 @@ export default function PresentationResultsPage() {
             value={p.confidence}
             color={VIOLET}
             tooltip={confidenceTooltip}
+            reason={p.score_reasons?.confidence}
           />
-          <Bar label={isAr ? 'البنية والتنظيم' : 'Structure & Organization'} value={p.structure} color="#10b981" />
-          <Bar label={isAr ? 'فاعلية التواصل' : 'Communication Effectiveness'} value={p.communication_effectiveness} color="var(--accent)" />
+          <Bar
+            label={isAr ? 'البنية والتنظيم' : 'Structure & Organization'}
+            value={p.structure}
+            color="#10b981"
+            reason={p.score_reasons?.structure}
+          />
+          <Bar
+            label={isAr ? 'فاعلية التواصل' : 'Communication Effectiveness'}
+            value={p.communication_effectiveness}
+            color="var(--accent)"
+            reason={p.score_reasons?.communication_effectiveness}
+          />
 
           {/* Real speech metrics */}
           <div style={{ paddingTop: 8, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -253,6 +321,94 @@ export default function PresentationResultsPage() {
         )}
       </div>
 
+      {/* Strengths and Improvements */}
+      {((p.strengths && p.strengths.length > 0) || (p.improvements && p.improvements.length > 0)) && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 20, marginBottom: 20 }}>
+          {p.strengths && p.strengths.length > 0 && (() => {
+            const noStrengths = p.strengths!.length === 1 && (
+              p.strengths![0].includes('No clear strengths') || p.strengths![0].includes('لم تتضح نقاط قوة')
+            );
+            return (
+              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, padding: 28, boxShadow: 'var(--shadow)' }}>
+                <h2 style={{ margin: '0 0 16px', fontSize: 17, fontWeight: 700 }}>{isAr ? 'نقاط القوة' : 'Strengths'}</h2>
+                {noStrengths ? (
+                  <p style={{ margin: 0, fontSize: 14, color: 'var(--fg3)', fontStyle: 'italic' }}>{p.strengths![0]}</p>
+                ) : (
+                  <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {p.strengths!.map((s, i) => (
+                      <li key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                        <span style={{ fontSize: 15, color: '#10b981', flexShrink: 0 }}>✓</span>
+                        <span style={{ fontSize: 14, color: 'var(--fg2)' }}>{s}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          })()}
+          {p.improvements && p.improvements.length > 0 && (
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, padding: 28, boxShadow: 'var(--shadow)' }}>
+              <h2 style={{ margin: '0 0 16px', fontSize: 17, fontWeight: 700 }}>{isAr ? 'مجالات التحسين' : 'Areas to Improve'}</h2>
+              <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {p.improvements.map((s, i) => (
+                  <li key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                    <span style={{ fontSize: 15, color: '#f59e0b', flexShrink: 0 }}>→</span>
+                    <span style={{ fontSize: 14, color: 'var(--fg2)' }}>{s}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Presentation Structure Review */}
+      {p.structure_review && (
+        <div style={{ marginBottom: 20 }}>
+          <h2 style={{ margin: '0 0 16px', fontSize: 19, fontWeight: 700 }}>
+            {isAr ? 'مراجعة بنية العرض' : 'Presentation Structure Review'}
+          </h2>
+          <p style={{ margin: '-4px 0 16px', fontSize: 13.5, color: 'var(--fg3)' }}>
+            {isAr
+              ? 'تقييم مفصّل لكل جزء من أجزاء عرضك كما يقدّمه مدرب متخصص'
+              : 'Detailed evaluation of each part of your presentation from a professional coaching perspective'}
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 16 }}>
+            {([
+              { key: 'opening' as const, label: isAr ? 'المقدمة' : 'Opening', icon: '🎯' },
+              { key: 'body' as const, label: isAr ? 'الجسم الرئيسي' : 'Body', icon: '📋' },
+              { key: 'transitions' as const, label: isAr ? 'الانتقالات' : 'Transitions', icon: '🔗' },
+              { key: 'conclusion' as const, label: isAr ? 'الخاتمة' : 'Conclusion', icon: '🏁' },
+            ] as const).map(({ key, label, icon }) => {
+              const section = p.structure_review![key];
+              if (!section) return null;
+              const col = section.score >= 75 ? '#10b981' : section.score >= 55 ? VIOLET : '#f59e0b';
+              return (
+                <div key={key} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 18, padding: '20px 22px', boxShadow: 'var(--shadow)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                      <span style={{ fontSize: 20 }}>{icon}</span>
+                      <span style={{ fontWeight: 700, fontSize: 15 }}>{label}</span>
+                    </div>
+                    <span style={{ fontWeight: 800, fontSize: 20, color: col }}>{section.score}<span style={{ fontSize: 12, color: 'var(--fg3)', fontWeight: 500 }}>/100</span></span>
+                  </div>
+                  <div style={{ height: 5, borderRadius: 3, background: 'var(--surface2)', overflow: 'hidden', marginBottom: 12 }}>
+                    <div style={{ width: `${section.score}%`, height: '100%', background: col, borderRadius: 3, transition: 'width 1s ease' }} />
+                  </div>
+                  <p style={{ margin: '0 0 10px', fontSize: 13.5, lineHeight: 1.55, color: 'var(--fg)' }}>{section.feedback}</p>
+                  {section.suggestions && (
+                    <div style={{ background: 'var(--surface2)', borderRadius: 9, padding: '9px 12px', fontSize: 12.5, color: 'var(--fg2)', lineHeight: 1.5 }}>
+                      <span style={{ fontWeight: 700, color: VIOLET }}>{isAr ? '💡 اقتراح: ' : '💡 Tip: '}</span>
+                      {section.suggestions}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* AI Feedback */}
       {p.ai_feedback && (
         <div style={{ background: VIOLET_SOFT, border: `1px solid rgba(139,92,246,.2)`, borderRadius: 20, padding: 28, marginBottom: 20, boxShadow: 'var(--shadow)' }}>
@@ -268,7 +424,7 @@ export default function PresentationResultsPage() {
 
       {/* Recommendations */}
       {p.recommendations?.length > 0 && (
-        <div>
+        <div style={{ marginBottom: 20 }}>
           <h2 style={{ margin: '0 0 16px', fontSize: 19, fontWeight: 700 }}>{isAr ? 'توصيات للتطوير' : 'Recommendations'}</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(260px,1fr))', gap: 16 }}>
             {p.recommendations.map((rec, i) => (
@@ -278,6 +434,23 @@ export default function PresentationResultsPage() {
                 <p style={{ margin: 0, color: 'var(--fg2)', fontSize: 13.5, lineHeight: 1.55 }}>{rec.description}</p>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Original Transcript */}
+      {presTranscript && (
+        <div style={{ marginTop: 20 }}>
+          <h2 style={{ margin: '0 0 12px', fontSize: 19, fontWeight: 700 }}>
+            {isAr ? 'نص العرض الأصلي' : 'Presentation Transcript'}
+          </h2>
+          <p style={{ margin: '-4px 0 12px', fontSize: 13.5, color: 'var(--fg3)' }}>
+            {isAr
+              ? 'النص الأصلي كما نسخه Whisper من التسجيل — لم يُترجم ولم يُعدَّل'
+              : 'Original transcript as captured by Whisper from your recording — not translated, not modified'}
+          </p>
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 18, padding: '20px 24px', boxShadow: 'var(--shadow)' }}>
+            <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.7, color: 'var(--fg)', whiteSpace: 'pre-wrap' }}>{presTranscript}</p>
           </div>
         </div>
       )}
