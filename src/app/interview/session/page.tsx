@@ -436,8 +436,7 @@ export default function InterviewSessionPage() {
   };
 
   const isRecorded = recorded[qIndex];
-  const allPreviousAnswered = qIndex >= 4 && recorded.slice(0, 4).every(Boolean);
-  const canProceed = (isRecorded || allPreviousAnswered) && phase !== 'transcribing' && phase !== 'recording' && phase !== 'mismatch';
+  const canProceed = isRecorded && phase !== 'transcribing' && phase !== 'recording' && phase !== 'mismatch';
   const savedTranscript = answers[qIndex] ?? '';
 
   return (

@@ -1,8 +1,11 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const OPENROUTER_API_KEY = Deno.env.get('whisper-large-v3') ?? '';
+const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? '';
 const MODEL = 'anthropic/claude-opus-4';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
 
 const ALLOWED_ORIGINS = [
   'https://qadha-gules.vercel.app',
@@ -38,16 +41,15 @@ function getCorsHeaders(req: Request) {
   };
 }
 
-function extractUserId(req: Request): string | null {
+async function extractUserId(req: Request): Promise<string | null> {
   const auth = req.headers.get('authorization') ?? '';
   if (!auth.startsWith('Bearer ')) return null;
-  const token = auth.slice(7);
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-    return payload.sub ?? null;
-  } catch {
-    return null;
-  }
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: auth } },
+    auth: { persistSession: false },
+  });
+  const { data: { user } } = await supabase.auth.getUser();
+  return user?.id ?? null;
 }
 
 Deno.serve(async (req: Request) => {
@@ -57,7 +59,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const userId = extractUserId(req);
+    const userId = await extractUserId(req);
     if (!userId) {
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
