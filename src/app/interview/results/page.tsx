@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowRight, RotateCcw, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
 import { useApp, InterviewResults, QuestionMetrics } from '@/lib/context';
 import { t } from '@/lib/i18n';
-import { analyzePerformance, saveSession, SpeechSummary } from '@/lib/ai';
+import { analyzePerformance, saveSession, getSession, SpeechSummary } from '@/lib/ai';
 
 const ROLE_LABELS: Record<string, string> = {
   dev: 'Software Developer', pm: 'Project Manager', acc: 'Accountant',
@@ -165,7 +165,38 @@ export default function InterviewResultsPage() {
   const answeredIndices = answers.map((a, i) => a ? i : -1).filter(i => i >= 0);
   const speechSummary = aggregateSpeechMetrics(answerMetrics, answeredIndices);
 
+  // Load from DB when coming from history (session ID in URL, no live context state)
   useEffect(() => {
+    if (interviewResults) return;
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get('session');
+    if (!sessionId) return;
+    setLoading(true);
+    getSession(sessionId).then(row => {
+      if (!row) { setLoading(false); return; }
+      const reconstructed: InterviewResults = {
+        overall_score: row.score_overall ?? 0,
+        communication: row.score_communication ?? 0,
+        confidence: row.score_confidence ?? 0,
+        answer_quality: row.score_quality ?? 0,
+        strengths: Array.isArray(row.strengths) ? row.strengths as string[] : [],
+        improvements: Array.isArray(row.improvements) ? row.improvements as string[] : [],
+        ai_feedback: row.ai_feedback ?? '',
+        recommendations: Array.isArray(row.recommendations) ? row.recommendations as { title: string; description: string }[] : [],
+        ideal_answers: Array.isArray(row.ideal_answers) ? row.ideal_answers as { question: string; ideal_answer: string }[] : undefined,
+      };
+      setInterviewResults(reconstructed);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    // If loading from history via DB, let the DB-load effect handle it
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('session')) return;
+    }
     if (interviewResults || calledRef.current) { setLoading(false); return; }
     calledRef.current = true;
 

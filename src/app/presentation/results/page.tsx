@@ -103,6 +103,11 @@ export default function PresentationResultsPage() {
   }, []);
 
   useEffect(() => {
+    // If loading from history via DB, let the DB-load effect handle it
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('session')) return; // DB-load effect is responsible
+    }
     if (presResults || calledRef.current) { setLoading(false); return; }
     calledRef.current = true;
 

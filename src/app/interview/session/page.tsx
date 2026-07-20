@@ -365,7 +365,7 @@ export default function InterviewSessionPage() {
           setPendingMetrics(metrics);
           setMismatchQIndex(capturedIndex);
           setMismatchDetectedLang(spokenLang);
-          setQIndex(i => { if (i === capturedIndex) setPhase('mismatch'); return i; });
+          setPhase('mismatch');
         } else {
           setAnswerMetrics(capturedIndex, metrics);
           setAnswer(capturedIndex, trimmed);

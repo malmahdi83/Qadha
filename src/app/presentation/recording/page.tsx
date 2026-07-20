@@ -82,16 +82,6 @@ export default function PresentationRecordingPage() {
     setMismatchDetectedLang('unknown');
     chunksRef.current = [];
 
-    // Capture auth token NOW while the session is guaranteed fresh (user just tapped Record)
-    let authToken: string;
-    try {
-      authToken = await getAuthToken();
-    } catch (err) {
-      if (err instanceof AuthSessionExpiredError) { router.replace('/auth/login'); return; }
-      setError(lang === 'ar' ? 'خطأ في المصادقة. يُرجى تسجيل الدخول مجددًا.' : 'Authentication error. Please sign in again.');
-      return;
-    }
-
     let audioStream: MediaStream;
     try {
       audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -113,9 +103,20 @@ export default function PresentationRecordingPage() {
       const durationSeconds = Math.max(0, (Date.now() - recordingStart) / 1000);
       const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
       setTranscribing(true);
+      let freshToken: string;
+      try {
+        freshToken = await getAuthToken();
+      } catch (err) {
+        if (err instanceof AuthSessionExpiredError) { router.replace('/auth/login'); return; }
+        setError(lang === 'ar' ? 'خطأ في المصادقة. يُرجى تسجيل الدخول مجددًا.' : 'Authentication error. Please sign in again.');
+        setTranscribing(false);
+        audioStreamRef.current?.getTracks().forEach(t => t.stop());
+        audioStreamRef.current = null;
+        return;
+      }
       try {
         const { transcript: text, detectedLanguage: groqLang, pauseCount, avgPauseDuration, longestPauseDuration } =
-          await transcribeAudio(blob, intLang, authToken);
+          await transcribeAudio(blob, intLang, freshToken);
         const trimmed = text.trim();
 
         // Two-source language detection (same as interview)
