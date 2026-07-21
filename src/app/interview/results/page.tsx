@@ -1,8 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, RotateCcw, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
-import { useApp, InterviewResults, QuestionMetrics } from '@/lib/context';
+import { ArrowRight, RotateCcw, Loader2, AlertCircle, ChevronDown, Download } from 'lucide-react';
+import { useApp, InterviewResults, QuestionMetrics, type PerQuestionDiagnosis, type AnswerDiagnosis, type DiagnosisDimension } from '@/lib/context';
 import { t } from '@/lib/i18n';
 import { analyzePerformance, saveSession, getSession, SpeechSummary } from '@/lib/ai';
 
@@ -97,15 +97,159 @@ function Bar({ label, value, max = 100, color = 'var(--accent)', tooltip }: {
   );
 }
 
+const STATUS_COLOR: Record<string, string> = {
+  'Excellent': '#10b981',
+  'Good': '#10b981',
+  'Acceptable': '#0284c7',
+  'Needs Improvement': '#d97706',
+  'Weak': '#ea580c',
+  'Missing': '#ea580c',
+  'Off-topic': '#dc2626',
+  'Incorrect': '#dc2626',
+  'Incomplete': '#d97706',
+  'Contradictory': '#dc2626',
+  'Unclear': '#d97706',
+  'Not Applicable': '#6b7280',
+};
+
+const SEVERITY_COLOR: Record<string, string> = {
+  none: '#6b7280',
+  low: '#10b981',
+  medium: '#d97706',
+  high: '#ea580c',
+  critical: '#dc2626',
+};
+
+const SEVERITY_BG: Record<string, string> = {
+  none: 'rgba(107,114,128,.1)',
+  low: 'rgba(16,185,129,.1)',
+  medium: 'rgba(217,119,6,.1)',
+  high: 'rgba(234,88,12,.1)',
+  critical: 'rgba(220,38,38,.1)',
+};
+
+const DIMENSION_LABELS_EN: Record<string, string> = {
+  relevance: 'Relevance',
+  accuracy: 'Accuracy',
+  completeness: 'Completeness',
+  logic_coherence: 'Logic & Coherence',
+  specificity: 'Specificity',
+  supporting_example: 'Supporting Example',
+  star_structure: 'STAR Structure',
+  communication_clarity: 'Communication Clarity',
+};
+
+const DIMENSION_LABELS_AR: Record<string, string> = {
+  relevance: 'الصلة بالسؤال',
+  accuracy: 'الدقة',
+  completeness: 'الاكتمال',
+  logic_coherence: 'المنطق والتماسك',
+  specificity: 'التحديد',
+  supporting_example: 'المثال الداعم',
+  star_structure: 'منهج STAR',
+  communication_clarity: 'وضوح التواصل',
+};
+
+const DIMENSION_ORDER = [
+  'relevance', 'accuracy', 'completeness', 'logic_coherence',
+  'specificity', 'supporting_example', 'star_structure', 'communication_clarity',
+] as const;
+
+function DiagnosisPanel({ diagnosis, lang }: { diagnosis: AnswerDiagnosis; lang: string }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const isAr = lang === 'ar';
+  const labels = isAr ? DIMENSION_LABELS_AR : DIMENSION_LABELS_EN;
+
+  const hasCritical = DIMENSION_ORDER.some(k => {
+    const d = diagnosis[k as keyof AnswerDiagnosis];
+    return d && (d.severity === 'critical' || d.severity === 'high');
+  });
+
+  return (
+    <div style={{ background: hasCritical ? 'rgba(220,38,38,.04)' : 'rgba(107,114,128,.04)', border: `1px solid ${hasCritical ? 'rgba(220,38,38,.2)' : 'var(--border)'}`, borderRadius: 14, overflow: 'hidden' }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: hasCritical ? '#dc2626' : 'var(--fg3)' }}>
+          {isAr ? 'تشخيص الإجابة' : 'Answer Diagnosis'}
+        </span>
+        {hasCritical && (
+          <span style={{ fontSize: 11, background: 'rgba(220,38,38,.12)', color: '#dc2626', border: '1px solid rgba(220,38,38,.25)', borderRadius: 10, padding: '1px 8px', fontWeight: 700 }}>
+            {isAr ? 'يحتاج مراجعة' : 'Needs Attention'}
+          </span>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {DIMENSION_ORDER.map((key, idx) => {
+          const dim: DiagnosisDimension | undefined = diagnosis[key as keyof AnswerDiagnosis];
+          if (!dim) return null;
+          const isNa = dim.status === 'Not Applicable';
+          const isOpen = expanded === key;
+          const hasDetails = !isNa && (dim.reason || dim.evidence || dim.how_to_improve);
+          const statusColor = STATUS_COLOR[dim.status] ?? '#6b7280';
+          const sevColor = SEVERITY_COLOR[dim.severity] ?? '#6b7280';
+          const sevBg = SEVERITY_BG[dim.severity] ?? 'rgba(107,114,128,.1)';
+
+          return (
+            <div key={key} style={{ borderTop: idx === 0 ? 'none' : '1px solid var(--border)' }}>
+              <button
+                onClick={() => hasDetails ? setExpanded(isOpen ? null : key) : undefined}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', background: 'none', border: 'none', cursor: hasDetails ? 'pointer' : 'default', fontFamily: 'inherit', textAlign: isAr ? 'right' : 'left' }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: sevColor, flexShrink: 0 }} />
+                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: isNa ? 'var(--fg3)' : 'var(--fg)' }}>
+                  {labels[key]}
+                </span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: statusColor, background: `${statusColor}18`, border: `1px solid ${statusColor}35`, borderRadius: 10, padding: '2px 9px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  {dim.status}
+                </span>
+                {dim.severity !== 'none' && !isNa && (
+                  <span style={{ fontSize: 10, fontWeight: 700, color: sevColor, background: sevBg, borderRadius: 8, padding: '2px 7px', whiteSpace: 'nowrap', flexShrink: 0, textTransform: 'uppercase' }}>
+                    {dim.severity}
+                  </span>
+                )}
+                {hasDetails && (
+                  <ChevronDown size={14} style={{ color: 'var(--fg3)', transition: 'transform .15s', transform: isOpen ? 'rotate(180deg)' : 'none', flexShrink: 0 }} />
+                )}
+              </button>
+
+              {isOpen && hasDetails && (
+                <div style={{ padding: '4px 16px 14px 32px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {dim.reason && (
+                    <p style={{ margin: 0, fontSize: 13, color: 'var(--fg2)', lineHeight: 1.55 }}>{dim.reason}</p>
+                  )}
+                  {dim.evidence && (
+                    <div style={{ background: 'var(--surface2)', borderRadius: 8, padding: '8px 12px', borderLeft: `3px solid ${statusColor}` }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--fg3)', textTransform: 'uppercase', letterSpacing: '.06em', display: 'block', marginBottom: 4 }}>
+                        {isAr ? 'من الإجابة' : 'From answer'}
+                      </span>
+                      <span style={{ fontSize: 13, color: 'var(--fg)', fontStyle: 'italic' }}>"{dim.evidence}"</span>
+                    </div>
+                  )}
+                  {dim.how_to_improve && (
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                      <span style={{ fontSize: 14, color: '#10b981', flexShrink: 0 }}>→</span>
+                      <p style={{ margin: 0, fontSize: 13, color: 'var(--fg2)', lineHeight: 1.55 }}>{dim.how_to_improve}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function AccordionCard({
-  index, question, userAnswer, idealAnswer, lang, contentOnly,
-}: { index: number; question: string; userAnswer: string; idealAnswer: string; lang: string; contentOnly?: boolean }) {
+  index, question, userAnswer, idealAnswer, lang, contentOnly, diagnosis,
+}: { index: number; question: string; userAnswer: string; idealAnswer: string; lang: string; contentOnly?: boolean; diagnosis?: AnswerDiagnosis }) {
   const [open, setOpen] = useState(false);
   const isAr = lang === 'ar';
   return (
     <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 18, overflow: 'hidden', boxShadow: 'var(--shadow)' }}>
       <button
         onClick={() => setOpen(o => !o)}
+        className="accordion-toggle"
         style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 14, padding: '18px 22px', background: 'none', border: 'none', cursor: 'pointer', textAlign: isAr ? 'right' : 'left', fontFamily: 'inherit' }}>
         <div style={{ width: 32, height: 32, borderRadius: 9, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 14, flexShrink: 0 }}>{index + 1}</div>
         <span style={{ flex: 1, fontWeight: 600, fontSize: 15, color: 'var(--fg)', lineHeight: 1.4 }}>{question}</span>
@@ -117,8 +261,7 @@ function AccordionCard({
         <ChevronDown size={18} style={{ color: 'var(--fg3)', transition: 'transform .2s', transform: open ? 'rotate(180deg)' : 'none', flexShrink: 0 }} />
       </button>
 
-      {open && (
-        <div style={{ padding: '0 22px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div className="accordion-body" style={{ padding: '0 22px 20px', display: open ? 'flex' : 'none', flexDirection: 'column', gap: 14 }}>
           {contentOnly && (
             <div style={{ background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.3)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#92400e', lineHeight: 1.55 }}>
               {isAr
@@ -136,6 +279,10 @@ function AccordionCard({
             </p>
           </div>
 
+          {diagnosis && (
+            <DiagnosisPanel diagnosis={diagnosis} lang={lang} />
+          )}
+
           <div style={{ background: 'rgba(16,185,129,.07)', border: '1.5px solid rgba(16,185,129,.25)', borderRadius: 12, padding: '14px 16px' }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: '#10b981', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#10b981' }} />
@@ -146,20 +293,21 @@ function AccordionCard({
             </p>
           </div>
         </div>
-      )}
     </div>
   );
 }
 
 export default function InterviewResultsPage() {
   const { lang, role, education, experience, intLang, questions, answers, answerMetrics,
-    contentOnlyAnswers, interviewResults, setInterviewResults, resetInterview, interviewMode } = useApp();
+    contentOnlyAnswers, interviewResults, setInterviewResults, resetInterview, interviewMode,
+    setQuestions, setAnswer } = useApp();
   const tr = t(lang);
   const router = useRouter();
   const calledRef = useRef(false);
   const savedRef = useRef(false);
   const [loading, setLoading] = useState(!interviewResults);
   const [error, setError] = useState('');
+  const [saveError, setSaveError] = useState(false);
 
   // Pre-compute aggregated speech metrics once
   const answeredIndices = answers.map((a, i) => a ? i : -1).filter(i => i >= 0);
@@ -184,8 +332,19 @@ export default function InterviewResultsPage() {
         ai_feedback: row.ai_feedback ?? '',
         recommendations: Array.isArray(row.recommendations) ? row.recommendations as { title: string; description: string }[] : [],
         ideal_answers: Array.isArray(row.ideal_answers) ? row.ideal_answers as { question: string; ideal_answer: string }[] : undefined,
+        per_question_diagnosis: Array.isArray(row.per_question_diagnosis) ? row.per_question_diagnosis as PerQuestionDiagnosis[] : undefined,
       };
       setInterviewResults(reconstructed);
+
+      // Restore question strings and answers so the accordion section renders
+      if (Array.isArray(row.questions)) {
+        type QAPair = { question: string; answer: string };
+        const pairs = row.questions as QAPair[];
+        const qStrings = pairs.map(p => p.question);
+        setQuestions(qStrings);
+        pairs.forEach((p, i) => setAnswer(i, p.answer ?? ''));
+      }
+
       setLoading(false);
     }).catch(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -264,7 +423,10 @@ export default function InterviewResultsPage() {
       improvements: interviewResults.improvements,
       recommendations: interviewResults.recommendations,
       ideal_answers: interviewResults.ideal_answers,
-    }).catch(console.error);
+      per_question_diagnosis: interviewResults.per_question_diagnosis,
+    })
+      .then(id => { if (id === null) setSaveError(true); })
+      .catch(() => setSaveError(true));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [interviewResults]);
 
@@ -306,6 +468,25 @@ export default function InterviewResultsPage() {
 
   return (
     <section style={{ maxWidth: 1100, margin: '0 auto', padding: 'clamp(20px,3.5vw,44px) clamp(16px,4vw,40px)' }}>
+      <style>{`
+        @media print {
+          nav, header, .no-print { display: none !important; }
+          body { background: #fff !important; color: #000 !important; }
+          section { max-width: 100% !important; padding: 16px !important; }
+          * { box-shadow: none !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .accordion-toggle { pointer-events: none; }
+          .accordion-toggle svg:last-child { display: none; }
+          .accordion-body { display: flex !important; }
+        }
+      `}</style>
+      {saveError && (
+        <div style={{ marginBottom: 16, background: 'rgba(245,158,11,.1)', border: '1px solid rgba(245,158,11,.4)', borderRadius: 12, padding: '12px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 14, color: '#92400e' }}>
+            {isAr ? '⚠️ تعذّر حفظ الجلسة. لن تظهر في السجل.' : '⚠️ Could not save this session. It will not appear in your history.'}
+          </span>
+          <button onClick={() => setSaveError(false)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 18, color: '#92400e', padding: 0, lineHeight: 1 }}>×</button>
+        </div>
+      )}
       {/* Hero */}
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 24, padding: 'clamp(24px,4vw,48px)', boxShadow: 'var(--shadow)', marginBottom: 24, display: 'flex', gap: 40, alignItems: 'center', flexWrap: 'wrap' }}>
         <ScoreGauge score={r2.overall_score} />
@@ -339,11 +520,22 @@ export default function InterviewResultsPage() {
               : (isAr ? 'يحتاج الأمر إلى مزيد من التدريب.' : 'More practice will sharpen your skills.')}
           </p>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <button onClick={() => { resetInterview(); router.push('/interview/setup'); }} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--fg)', fontFamily: 'inherit', fontWeight: 700, fontSize: 14, padding: '10px 18px', borderRadius: 11, cursor: 'pointer' }}>
+            <button onClick={() => { resetInterview(); router.push('/interview/setup'); }} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--fg)', fontFamily: 'inherit', fontWeight: 700, fontSize: 14, padding: '10px 18px', borderRadius: 11, cursor: 'pointer' }} className="no-print">
               <RotateCcw size={16} />{isAr ? 'محاولة جديدة' : 'Try Again'}
             </button>
-            <button onClick={() => router.push('/modes')} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 14, padding: '10px 18px', borderRadius: 11, cursor: 'pointer' }}>
+            <button onClick={() => router.push('/modes')} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 14, padding: '10px 18px', borderRadius: 11, cursor: 'pointer' }} className="no-print">
               {isAr ? 'اختر وضعًا آخر' : 'Try Another Mode'}<ArrowRight size={16} />
+            </button>
+            <button
+              onClick={() => {
+                const prev = document.title;
+                document.title = isAr ? 'تقرير الأداء - قضاء' : 'Performance Report - Qadha';
+                window.print();
+                document.title = prev;
+              }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--fg)', fontFamily: 'inherit', fontWeight: 700, fontSize: 14, padding: '10px 18px', borderRadius: 11, cursor: 'pointer' }}
+              className="no-print">
+              <Download size={16} />{isAr ? 'تنزيل PDF' : 'Download PDF'}
             </button>
           </div>
         </div>
@@ -502,9 +694,17 @@ export default function InterviewResultsPage() {
                 index={i}
                 question={q}
                 userAnswer={answers[i] || ''}
-                idealAnswer={r2.ideal_answers?.[i]?.ideal_answer ?? ''}
+                idealAnswer={
+                  r2.ideal_answers?.find(ia => ia.question === q)?.ideal_answer
+                  ?? r2.ideal_answers?.[i]?.ideal_answer
+                  ?? ''
+                }
                 lang={lang}
                 contentOnly={contentOnlyAnswers[i]}
+                diagnosis={
+                  r2.per_question_diagnosis?.find(d => d.question === q)?.diagnosis
+                  ?? r2.per_question_diagnosis?.[i]?.diagnosis
+                }
               />
             ))}
           </div>

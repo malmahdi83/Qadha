@@ -15,6 +15,10 @@ const ALLOWED_ORIGINS = [
 // Rate limit: 5 analyses per user per hour
 const RATE_LIMIT = 5;
 const RATE_WINDOW_MS = 60 * 60 * 1000;
+// NOTE: This in-memory rate limit resets on every cold start and is not shared
+// across isolate instances. It provides a best-effort guard against accidental
+// overuse but can be bypassed. For production enforcement, replace with a
+// persistent store (e.g. Supabase KV, Redis, or a DB counter).
 const rateCounts = new Map<string, { count: number; resetAt: number }>();
 
 function checkRateLimit(key: string): boolean {
@@ -56,6 +60,14 @@ Deno.serve(async (req: Request) => {
   const corsHeaders = getCorsHeaders(req);
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
+  }
+
+  const origin = req.headers.get('origin') ?? '';
+  if (req.method !== 'OPTIONS' && origin && !ALLOWED_ORIGINS.includes(origin)) {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), {
+      status: 403,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 
   try {
@@ -145,7 +157,7 @@ ${fillerLine}`;
             const item = q as Record<string, unknown>;
             return {
               question: sanitize(item.question, 300),
-              answer: sanitize(item.answer, 1000),
+              answer: sanitize(item.answer, 2000),
             };
           })
         : [];
@@ -173,7 +185,40 @@ CRITICAL RULES:
 6. Improvements: must be specific, actionable, and tied to the ACTUAL weaknesses observed in the answers.
 7. For "confidence" (delivery confidence estimate 0-100): factor in the measured speech data provided — pace vs ideal range, filler word frequency, pause frequency — as well as answer completeness and hesitation markers visible in the transcript. A fast, filler-heavy, pause-riddled delivery should lower this score even if answers are decent.
 8. ai_feedback: be honest and direct, like a real coach. Point out weak answers specifically. Do NOT say "great effort" if the answers were poor.
-9. Return valid JSON only, no markdown, no extra text.`;
+9. Return valid JSON only, no markdown, no extra text.
+
+ANSWER DIAGNOSIS RULES (new — follow for every question):
+For each answer, you must diagnose it across 8 dimensions. Be honest, evidence-based, and specific. Do not invent or hallucinate evidence.
+
+Dimensions:
+- relevance: Does the answer address what was asked?
+- accuracy: Is the content factually/technically correct for the role?
+- completeness: Does the answer cover all expected aspects?
+- logic_coherence: Is the answer internally consistent and logically structured?
+- specificity: Does the answer include concrete details, numbers, named examples?
+- supporting_example: Is there a real example from the candidate's experience?
+- star_structure: Is the Situation-Task-Action-Result framework present? (mark Not Applicable for knowledge questions)
+- communication_clarity: Is the answer well-organized and easy to follow?
+
+Valid statuses: "Excellent" | "Good" | "Acceptable" | "Needs Improvement" | "Weak" | "Off-topic" | "Incorrect" | "Incomplete" | "Contradictory" | "Unclear" | "Not Applicable"
+Valid severities: "none" | "low" | "medium" | "high" | "critical"
+
+SCORE CEILING RULES — enforce these on answer_quality:
+- Answer is off-topic (relevance status = "Off-topic", severity ≥ high) → answer_quality ceiling 15
+- Answer is factually incorrect (accuracy status = "Incorrect", severity ≥ high) → answer_quality ceiling 30
+- Answer is contradictory (logic_coherence = "Contradictory", severity ≥ high) → answer_quality ceiling 25
+- Answer is empty or near-empty → answer_quality ceiling 10
+- Answer is relevant but very incomplete (completeness severity ≥ high) → answer_quality ceiling 45
+- Generic answer, no examples at all → answer_quality ceiling 55
+
+IMPORTANT RULES FOR DIAGNOSIS:
+- "evidence" field: quote or closely paraphrase the actual words from the answer. Empty string if no evidence applies.
+- "reason" field: 1-2 sentences explaining the diagnosis.
+- "how_to_improve" field: specific actionable guidance. Empty string only for "Excellent" or "Not Applicable".
+- Never accuse the user of lying. For suspicious claims use "Credibility: Questionable" in reason.
+- Use respectful coaching language. Never say "stupid", "nonsense", "ridiculous".
+- Short but directly relevant answer = "Incomplete", not "Off-topic".
+- Generic claim without evidence (e.g. "I work hard") → specificity = "Weak", supporting_example = "Missing" or "Weak".`;
 
       userPrompt = isArabic
         ? `أنت محلّل مقابلات صارم وواقعي. قيّم أداء هذا المرشح لوظيفة ${role} (تعليم: ${education}, خبرة: ${experience}).
@@ -196,8 +241,29 @@ ${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. ال
 5. "confidence" (تقدير الثقة في الإلقاء): احسبه بناءً على بيانات الكلام المقاسة أعلاه (وتيرة الكلام مقارنة بالمثالية، كثافة كلمات الحشو، تكرار التوقفات) إضافةً إلى اكتمال الإجابات وعلامات التردد في النص.
 6. اكتب إجابة مثالية لكل سؤال بالعربية بمنهج STAR مناسبة لمستوى ${experience} في ${role}.
 
+تعليمات تشخيص الإجابات (جديدة — طبّقها على كل سؤال):
+لكل إجابة، يجب تشخيصها عبر 8 أبعاد. كن صادقاً ومحدداً ومبنياً على الأدلة الفعلية. لا تخترع أدلة.
+
+الأبعاد:
+- relevance: هل تتناول الإجابة ما طُرح في السؤال؟
+- accuracy: هل المحتوى دقيق مهنياً/تقنياً بما يتناسب مع الدور؟
+- completeness: هل الإجابة تغطي جميع الجوانب المتوقعة؟
+- logic_coherence: هل الإجابة متسقة داخلياً ومنطقياً؟
+- specificity: هل تتضمن الإجابة تفاصيل ملموسة أو أرقاماً أو أمثلة محددة؟
+- supporting_example: هل يوجد مثال حقيقي من تجربة المرشح؟
+- star_structure: هل يوجد منهج STAR؟ (اكتب "Not Applicable" للأسئلة المعرفية)
+- communication_clarity: هل الإجابة منظمة وسهلة الفهم؟
+
+قواعد سقف الدرجات:
+- إجابة خارج الموضوع (relevance = "Off-topic") → سقف answer_quality = 15
+- إجابة غلط فعلياً (accuracy = "Incorrect") → سقف answer_quality = 30
+- إجابة متناقضة (logic_coherence = "Contradictory") → سقف answer_quality = 25
+- إجابة فارغة → سقف answer_quality = 10
+- إجابة ذات صلة لكن ناقصة جداً → سقف answer_quality = 45
+- إجابة عامة بلا أمثلة → سقف answer_quality = 55
+
 أعد JSON فقط، جميع القيم يجب أن تعكس الإجابات الفعلية:
-{"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"strengths":["نقطة قوة حقيقية مدعومة بالإجابات أو الجملة الثابتة إذا لم توجد"],"improvements":["تحسين محدد مبني على ضعف فعلي في الإجابة 1","تحسين محدد 2","تحسين محدد 3"],"ai_feedback":"تغذية راجعة صريحة وصادقة كمدرب مقابلات حقيقي، تشير إلى الإجابات الضعيفة بالتحديد.","recommendations":[{"title":"توصية محددة 1","description":"نصيحة عملية 1"},{"title":"توصية محددة 2","description":"نصيحة عملية 2"},{"title":"توصية محددة 3","description":"نصيحة عملية 3"}],"ideal_answers":[{"question":"نص السؤال 1","ideal_answer":"إجابة مثالية بمنهج STAR"},{"question":"نص السؤال 2","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 3","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 4","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 5","ideal_answer":"إجابة مثالية"}]}`
+{"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"strengths":["نقطة قوة حقيقية مدعومة بالإجابات أو الجملة الثابتة إذا لم توجد"],"improvements":["تحسين محدد مبني على ضعف فعلي في الإجابة 1","تحسين محدد 2","تحسين محدد 3"],"ai_feedback":"تغذية راجعة صريحة وصادقة كمدرب مقابلات حقيقي، تشير إلى الإجابات الضعيفة بالتحديد.","recommendations":[{"title":"توصية محددة 1","description":"نصيحة عملية 1"},{"title":"توصية محددة 2","description":"نصيحة عملية 2"},{"title":"توصية محددة 3","description":"نصيحة عملية 3"}],"ideal_answers":[{"question":"نص السؤال 1","ideal_answer":"إجابة مثالية بمنهج STAR"},{"question":"نص السؤال 2","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 3","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 4","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 5","ideal_answer":"إجابة مثالية"}],"per_question_diagnosis":[{"question":"نص السؤال 1","diagnosis":{"relevance":{"status":"Off-topic","severity":"critical","reason":"الإجابة لا تتناول السؤال المطروح.","evidence":"أنا أحب كرة القدم والسفر.","how_to_improve":"ابدأ بالإجابة المباشرة على ما طُرح."},"accuracy":{"status":"Not Applicable","severity":"none","reason":"لا يمكن تقييم الدقة لأن الإجابة خارج الموضوع.","evidence":"","how_to_improve":""},"completeness":{"status":"Weak","severity":"high","reason":"لم يُقدَّم أي محتوى ذي صلة.","evidence":"","how_to_improve":"غطِّ جميع الجوانب المطلوبة."},"logic_coherence":{"status":"Acceptable","severity":"low","reason":"الجملة متماسكة نحوياً.","evidence":"","how_to_improve":""},"specificity":{"status":"Weak","severity":"medium","reason":"لا توجد تفاصيل محددة تتعلق بالسؤال.","evidence":"","how_to_improve":"أضف أمثلة وأرقاماً ومواقف محددة."},"supporting_example":{"status":"Not Applicable","severity":"none","reason":"لا يوجد محتوى ذي صلة.","evidence":"","how_to_improve":""},"star_structure":{"status":"Not Applicable","severity":"none","reason":"لا ينطبق على هذا النوع من الأسئلة.","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"الإجابة واضحة نحوياً.","evidence":"","how_to_improve":""}}},{"question":"نص السؤال 2","diagnosis":{"relevance":{"status":"Good","severity":"low","reason":"الإجابة تتناول السؤال.","evidence":"","how_to_improve":"أضف أمثلة محددة أكثر."},"accuracy":{"status":"Acceptable","severity":"low","reason":"لا توجد أخطاء واضحة.","evidence":"","how_to_improve":""},"completeness":{"status":"Needs Improvement","severity":"medium","reason":"الإجابة تغطي الأساسيات لكن تفتقر لجوانب مهمة.","evidence":"","how_to_improve":"تناول أيضاً النقطة س و ص."},"logic_coherence":{"status":"Good","severity":"none","reason":"الإجابة منطقية ومتسلسلة.","evidence":"","how_to_improve":""},"specificity":{"status":"Weak","severity":"medium","reason":"الادعاءات مبهمة.","evidence":"أنا دائماً أعمل بجد.","how_to_improve":"استبدل الادعاءات العامة بأمثلة محددة."},"supporting_example":{"status":"Incomplete","severity":"medium","reason":"مثال جزئي لكن بلا تفاصيل كافية.","evidence":"","how_to_improve":"أكمل المثال بالموقف والإجراء والنتيجة."},"star_structure":{"status":"Incomplete","severity":"medium","reason":"الموقف موجود لكن الإجراء والنتيجة غائبان.","evidence":"","how_to_improve":"أضف ما قمت به والنتيجة التي تحققت."},"communication_clarity":{"status":"Good","severity":"none","reason":"الإجابة سهلة المتابعة.","evidence":"","how_to_improve":""}}},{"question":"نص السؤال 3","diagnosis":{"relevance":{"status":"Excellent","severity":"none","reason":"","evidence":"","how_to_improve":""},"accuracy":{"status":"Excellent","severity":"none","reason":"","evidence":"","how_to_improve":""},"completeness":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"logic_coherence":{"status":"Excellent","severity":"none","reason":"","evidence":"","how_to_improve":""},"specificity":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"supporting_example":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"star_structure":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Excellent","severity":"none","reason":"","evidence":"","how_to_improve":""}}},{"question":"نص السؤال 4","diagnosis":{"relevance":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"accuracy":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"completeness":{"status":"Needs Improvement","severity":"medium","reason":"","evidence":"","how_to_improve":""},"logic_coherence":{"status":"Good","severity":"none","reason":"","evidence":"","how_to_improve":""},"specificity":{"status":"Needs Improvement","severity":"medium","reason":"","evidence":"","how_to_improve":""},"supporting_example":{"status":"Weak","severity":"medium","reason":"","evidence":"","how_to_improve":""},"star_structure":{"status":"Not Applicable","severity":"none","reason":"","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"","evidence":"","how_to_improve":""}}},{"question":"نص السؤال 5","diagnosis":{"relevance":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"accuracy":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"completeness":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"logic_coherence":{"status":"Good","severity":"none","reason":"","evidence":"","how_to_improve":""},"specificity":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"supporting_example":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"star_structure":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"","evidence":"","how_to_improve":""}}}]}`
         : `You are a strict, realistic interview coach evaluating a candidate for a ${role} role (Education: ${education}, Experience: ${experience}).
 
 ${speechMetricsBlock}
@@ -223,7 +289,7 @@ STRICT EVALUATION RULES — follow exactly:
 7. ai_feedback: be direct and honest like a real coach. Name the weak answers specifically. Do NOT pad with generic praise.
 
 Return ONLY valid JSON, all values must reflect actual answer quality:
-{"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"strengths":["Genuine strength from answers, or the fixed message if none"],"improvements":["Specific improvement tied to weak answer 1","Specific improvement 2","Specific improvement 3"],"ai_feedback":"Direct, honest coaching feedback naming which answers were weak and why.","recommendations":[{"title":"Specific recommendation 1","description":"Practical advice 1"},{"title":"Specific recommendation 2","description":"Practical advice 2"},{"title":"Specific recommendation 3","description":"Practical advice 3"}],"ideal_answers":[{"question":"Actual Q1 text","ideal_answer":"STAR ideal answer for Q1"},{"question":"Actual Q2 text","ideal_answer":"Ideal answer for Q2"},{"question":"Actual Q3 text","ideal_answer":"Ideal answer for Q3"},{"question":"Actual Q4 text","ideal_answer":"Ideal answer for Q4"},{"question":"Actual Q5 text","ideal_answer":"Ideal answer for Q5"}]}`;
+{"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"strengths":["Genuine strength from answers, or the fixed message if none"],"improvements":["Specific improvement tied to weak answer 1","Specific improvement 2","Specific improvement 3"],"ai_feedback":"Direct, honest coaching feedback naming which answers were weak and why.","recommendations":[{"title":"Specific recommendation 1","description":"Practical advice 1"},{"title":"Specific recommendation 2","description":"Practical advice 2"},{"title":"Specific recommendation 3","description":"Practical advice 3"}],"ideal_answers":[{"question":"Actual Q1 text","ideal_answer":"STAR ideal answer for Q1"},{"question":"Actual Q2 text","ideal_answer":"Ideal answer for Q2"},{"question":"Actual Q3 text","ideal_answer":"Ideal answer for Q3"},{"question":"Actual Q4 text","ideal_answer":"Ideal answer for Q4"},{"question":"Actual Q5 text","ideal_answer":"Ideal answer for Q5"}],"per_question_diagnosis":[{"question":"Actual Q1 text","diagnosis":{"relevance":{"status":"Off-topic","severity":"critical","reason":"The answer does not address the question.","evidence":"I like football.","how_to_improve":"Start by directly addressing what was asked."},"accuracy":{"status":"Not Applicable","severity":"none","reason":"Cannot assess accuracy since the answer is off-topic.","evidence":"","how_to_improve":""},"completeness":{"status":"Weak","severity":"high","reason":"No relevant content was provided.","evidence":"","how_to_improve":"Include all key aspects of the answer."},"logic_coherence":{"status":"Acceptable","severity":"low","reason":"The sentence is grammatically coherent.","evidence":"","how_to_improve":""},"specificity":{"status":"Weak","severity":"medium","reason":"No specific details related to the question.","evidence":"","how_to_improve":"Add concrete examples, numbers, or named situations."},"supporting_example":{"status":"Not Applicable","severity":"none","reason":"No relevant content to build an example from.","evidence":"","how_to_improve":""},"star_structure":{"status":"Not Applicable","severity":"none","reason":"Not applicable to this question type or answer.","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"The response is grammatically clear.","evidence":"","how_to_improve":""}}},{"question":"Actual Q2 text","diagnosis":{"relevance":{"status":"Good","severity":"low","reason":"The answer addresses the question.","evidence":"","how_to_improve":"Add more specific examples."},"accuracy":{"status":"Acceptable","severity":"low","reason":"No obvious factual errors.","evidence":"","how_to_improve":""},"completeness":{"status":"Needs Improvement","severity":"medium","reason":"The answer covers the basics but misses key aspects.","evidence":"","how_to_improve":"Also address X and Y."},"logic_coherence":{"status":"Good","severity":"none","reason":"The answer follows a logical flow.","evidence":"","how_to_improve":""},"specificity":{"status":"Weak","severity":"medium","reason":"Claims are vague.","evidence":"I always work hard.","how_to_improve":"Replace general claims with specific examples."},"supporting_example":{"status":"Incomplete","severity":"medium","reason":"A partial example is mentioned but lacks detail.","evidence":"","how_to_improve":"Complete the example with situation, action, and result."},"star_structure":{"status":"Incomplete","severity":"medium","reason":"Situation is present but action and result are missing.","evidence":"","how_to_improve":"Add what you did and what the outcome was."},"communication_clarity":{"status":"Good","severity":"none","reason":"The answer is easy to follow.","evidence":"","how_to_improve":""}}},{"question":"Actual Q3 text","diagnosis":{"relevance":{"status":"Excellent","severity":"none","reason":"","evidence":"","how_to_improve":""},"accuracy":{"status":"Excellent","severity":"none","reason":"","evidence":"","how_to_improve":""},"completeness":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"logic_coherence":{"status":"Excellent","severity":"none","reason":"","evidence":"","how_to_improve":""},"specificity":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"supporting_example":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"star_structure":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Excellent","severity":"none","reason":"","evidence":"","how_to_improve":""}}},{"question":"Actual Q4 text","diagnosis":{"relevance":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"accuracy":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"completeness":{"status":"Needs Improvement","severity":"medium","reason":"","evidence":"","how_to_improve":""},"logic_coherence":{"status":"Good","severity":"none","reason":"","evidence":"","how_to_improve":""},"specificity":{"status":"Needs Improvement","severity":"medium","reason":"","evidence":"","how_to_improve":""},"supporting_example":{"status":"Weak","severity":"medium","reason":"","evidence":"","how_to_improve":""},"star_structure":{"status":"Not Applicable","severity":"none","reason":"","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"","evidence":"","how_to_improve":""}}},{"question":"Actual Q5 text","diagnosis":{"relevance":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"accuracy":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"completeness":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"logic_coherence":{"status":"Good","severity":"none","reason":"","evidence":"","how_to_improve":""},"specificity":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"supporting_example":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"star_structure":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"","evidence":"","how_to_improve":""}}}]}`;
 
     } else if (mode === 'presentation') {
       const topic = sanitize(body.topic, 200);
@@ -340,6 +406,7 @@ STRICT EVALUATION RULES — follow exactly:
         temperature: 0.4,
         max_tokens: 4096,
       }),
+      signal: AbortSignal.timeout(100000),
     });
 
     if (!response.ok) {
@@ -358,8 +425,48 @@ STRICT EVALUATION RULES — follow exactly:
     try {
       parsed = JSON.parse(content);
     } catch {
-      const match = content.match(/\{[\s\S]*\}/);
-      parsed = match ? JSON.parse(match[0]) : {};
+      try {
+        const match = content.match(/\{[\s\S]*\}/);
+        parsed = match ? JSON.parse(match[0]) : {};
+      } catch {
+        parsed = {};
+      }
+    }
+
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      typeof (parsed as Record<string, unknown>).overall_score !== 'number'
+    ) {
+      return new Response(
+        JSON.stringify({ error: 'AI returned an unexpected response. Please try again.' }),
+        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Enforce score ceilings programmatically for interview mode
+    if (mode === 'interview') {
+      const p = parsed as Record<string, unknown>;
+      const diag = p.per_question_diagnosis;
+      if (Array.isArray(diag) && diag.length > 0) {
+        let totalCeiling = 0;
+        for (const item of diag) {
+          const d = (item as Record<string, unknown>)?.diagnosis as Record<string, Record<string, string>> | undefined;
+          if (!d) { totalCeiling += 100; continue; }
+          let ceiling = 100;
+          if (d.relevance?.status === 'Off-topic') ceiling = Math.min(ceiling, 15);
+          if (d.accuracy?.status === 'Incorrect') ceiling = Math.min(ceiling, 30);
+          if (d.logic_coherence?.status === 'Contradictory') ceiling = Math.min(ceiling, 25);
+          if (d.completeness?.status === 'Missing') ceiling = Math.min(ceiling, 10);
+          if (d.completeness?.status === 'Incomplete' && d.completeness?.severity === 'high') ceiling = Math.min(ceiling, 45);
+          if (d.specificity?.status === 'Weak' && d.supporting_example?.status === 'Weak') ceiling = Math.min(ceiling, 55);
+          totalCeiling += ceiling;
+        }
+        const avgCeiling = Math.round(totalCeiling / diag.length);
+        if (typeof p.answer_quality === 'number') {
+          p.answer_quality = Math.min(p.answer_quality, avgCeiling);
+        }
+      }
     }
 
     return new Response(
@@ -368,6 +475,13 @@ STRICT EVALUATION RULES — follow exactly:
     );
 
   } catch (err) {
+    if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+      console.error('OpenRouter timeout:', err);
+      return new Response(
+        JSON.stringify({ error: 'Analysis timed out. Please try again.' }),
+        { status: 504, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
     console.error('Unexpected error:', err);
     return new Response(
       JSON.stringify({ error: 'Internal server error' }),
