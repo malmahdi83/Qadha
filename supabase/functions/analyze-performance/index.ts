@@ -404,9 +404,9 @@ STRICT EVALUATION RULES — follow exactly:
           { role: 'user', content: userPrompt },
         ],
         temperature: 0.4,
-        max_tokens: 4096,
+        max_tokens: 8192,
       }),
-      signal: AbortSignal.timeout(100000),
+      signal: AbortSignal.timeout(140000),
     });
 
     if (!response.ok) {
