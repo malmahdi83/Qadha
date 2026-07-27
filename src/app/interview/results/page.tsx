@@ -442,6 +442,11 @@ export default function InterviewResultsPage() {
         <p style={{ margin: 0, color: 'var(--fg2)', textAlign: 'center', maxWidth: '28em' }}>
           {lang === 'ar' ? 'يراجع الذكاء الاصطناعي إجاباتك ويحضّر تقريرًا مفصّلًا.' : 'AI is reviewing your answers and preparing a detailed report.'}
         </p>
+        <p style={{ margin: 0, color: 'var(--fg3)', textAlign: 'center', maxWidth: '28em', fontSize: 13, padding: '10px 16px', background: 'var(--surface2)', borderRadius: 10 }}>
+          {lang === 'ar'
+            ? '⏳ قد يستغرق هذا ما يصل إلى دقيقة واحدة. يرجى البقاء في هذه الصفحة.'
+            : '⏳ This may take up to 1 minute. Please stay on this page.'}
+        </p>
       </section>
     );
   }
