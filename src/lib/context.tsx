@@ -7,6 +7,57 @@ export type { QuestionMetrics };
 
 export type InterviewExperienceMode = 'real' | 'assisted';
 
+export type DiagnosisSeverity = 'none' | 'low' | 'medium' | 'high' | 'critical';
+
+export type DiagnosisStatus =
+  | 'Excellent' | 'Good' | 'Acceptable' | 'Needs Improvement'
+  | 'Weak' | 'Off-topic' | 'Incorrect' | 'Incomplete'
+  | 'Contradictory' | 'Unclear' | 'Not Applicable' | 'Missing';
+
+export interface DiagnosisDimension {
+  status: DiagnosisStatus;
+  severity: DiagnosisSeverity;
+  reason: string;
+  evidence?: string;
+  how_to_improve: string;
+}
+
+export interface AnswerDiagnosis {
+  relevance: DiagnosisDimension;
+  accuracy: DiagnosisDimension;
+  completeness: DiagnosisDimension;
+  logic_coherence: DiagnosisDimension;
+  specificity: DiagnosisDimension;
+  supporting_example: DiagnosisDimension;
+  star_structure?: DiagnosisDimension;
+  communication_clarity: DiagnosisDimension;
+}
+
+export type AnswerClassificationIssue =
+  | 'off_topic' | 'incorrect' | 'incomplete' | 'vague' | 'contradictory'
+  | 'nonsensical' | 'unsupported_claim' | 'no_answer' | 'skipped' | 'acceptable' | 'strong';
+
+export interface StarSubDiagnosis {
+  situation: 'present' | 'partial' | 'missing' | 'not_applicable';
+  task: 'present' | 'partial' | 'missing' | 'not_applicable';
+  action: 'present' | 'partial' | 'missing' | 'not_applicable';
+  result: 'present' | 'partial' | 'missing' | 'not_applicable';
+}
+
+export interface PerQuestionDiagnosis {
+  question: string;
+  answer_score?: number;
+  answer_classification?: {
+    primary_issue: AnswerClassificationIssue;
+    secondary_issues: string[];
+  };
+  diagnosis: AnswerDiagnosis;
+  star_sub_diagnosis?: StarSubDiagnosis;
+  what_interviewer_expected?: string;
+  coach_feedback?: string;
+  improved_answer?: string;
+}
+
 export interface InterviewResults {
   overall_score: number;
   communication: number;
@@ -17,6 +68,7 @@ export interface InterviewResults {
   ai_feedback: string;
   recommendations: { title: string; description: string }[];
   ideal_answers?: { question: string; ideal_answer: string }[];
+  per_question_diagnosis?: PerQuestionDiagnosis[];
 }
 
 export interface PresentationResults {
@@ -121,10 +173,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const savedTheme = localStorage.getItem('qadha-theme') as 'light' | 'dark' | null;
     if (savedLang) setLangState(savedLang);
     if (savedTheme) setTheme(savedTheme);
-    try {
-      const saved = localStorage.getItem('qadha-last-questions');
-      if (saved) setLastQuestionsState(JSON.parse(saved));
-    } catch { /* ignore */ }
+    const saved = localStorage.getItem('qadha-last-questions');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) setLastQuestionsState(parsed);
+      } catch { /* ignore malformed data */ }
+    }
   }, []);
 
   useEffect(() => {
@@ -174,6 +229,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setAnswerMetricsState([null, null, null, null, null]);
     setContentOnlyAnswersState([false, false, false, false, false]);
     setInterviewResults(null);
+    setInterviewMode('assisted');
   };
 
   return (

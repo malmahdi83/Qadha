@@ -2,7 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? '';
-const MODEL = 'anthropic/claude-3-5-sonnet-20241022';
+const MODEL = 'anthropic/claude-haiku-4-5';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
@@ -12,13 +12,8 @@ const ALLOWED_ORIGINS = [
   'http://localhost:3000',
 ];
 
-// Rate limit: 5 analyses per user per hour
 const RATE_LIMIT = 5;
 const RATE_WINDOW_MS = 60 * 60 * 1000;
-// NOTE: This in-memory rate limit resets on every cold start and is not shared
-// across isolate instances. It provides a best-effort guard against accidental
-// overuse but can be bypassed. For production enforcement, replace with a
-// persistent store (e.g. Supabase KV, Redis, or a DB counter).
 const rateCounts = new Map<string, { count: number; resetAt: number }>();
 
 function checkRateLimit(key: string): boolean {
@@ -54,6 +49,73 @@ async function extractUserId(req: Request): Promise<string | null> {
   });
   const { data: { user } } = await supabase.auth.getUser();
   return user?.id ?? null;
+}
+
+// ── Programmatic consistency enforcement ────────────────────────────────────
+
+function enforceConsistency(parsed: Record<string, unknown>, mode: string): void {
+  if (mode !== 'interview') return;
+
+  const diag = parsed.per_question_diagnosis;
+  if (!Array.isArray(diag) || diag.length === 0) return;
+
+  // ── 1. Per-question score ceilings ──────────────────────────────────────
+  let totalCeiling = 0;
+  for (const item of diag) {
+    const rec = item as Record<string, unknown>;
+    const d = rec?.diagnosis as Record<string, Record<string, string>> | undefined;
+    if (!d) { totalCeiling += 100; continue; }
+
+    let ceiling = 100;
+    if (d.relevance?.status === 'Off-topic') ceiling = Math.min(ceiling, 15);
+    if (d.accuracy?.status === 'Incorrect') ceiling = Math.min(ceiling, 30);
+    if (d.logic_coherence?.status === 'Contradictory') ceiling = Math.min(ceiling, 25);
+    if (d.completeness?.status === 'Missing') ceiling = Math.min(ceiling, 10);
+    if (d.completeness?.status === 'Incomplete' && d.completeness?.severity === 'high') ceiling = Math.min(ceiling, 45);
+    if (d.specificity?.status === 'Weak' && d.supporting_example?.status === 'Weak') ceiling = Math.min(ceiling, 55);
+    totalCeiling += ceiling;
+  }
+  const avgCeiling = Math.round(totalCeiling / diag.length);
+  if (typeof parsed.answer_quality === 'number') {
+    parsed.answer_quality = Math.min(parsed.answer_quality, avgCeiling);
+  }
+
+  // ── 2. Strengths validation against diagnosis ────────────────────────────
+  const strengths = parsed.strengths;
+  if (!Array.isArray(strengths)) return;
+
+  // Collect flags from all questions
+  let anyOffTopic = false;
+  let anyIncorrect = false;
+  let anyStarMissing = false;
+  const answerQuality = typeof parsed.answer_quality === 'number' ? parsed.answer_quality : 100;
+
+  for (const item of diag) {
+    const d = (item as Record<string, unknown>)?.diagnosis as Record<string, Record<string, string>> | undefined;
+    if (!d) continue;
+    if (d.relevance?.status === 'Off-topic') anyOffTopic = true;
+    if (d.accuracy?.status === 'Incorrect') anyIncorrect = true;
+    if (d.star_structure?.status === 'Missing' || d.star_structure?.status === 'Weak') anyStarMissing = true;
+  }
+
+  // Keyword patterns that contradict known issues
+  const forbiddenIfOffTopic = /answered.{0,20}question|addressed.{0,20}question|relevant|on.?topic|clear.{0,15}answer/i;
+  const forbiddenIfIncorrect = /technical.{0,20}knowl|accurate|correct.{0,20}knowl|strong.{0,20}know/i;
+  const forbiddenIfStarMissing = /star.{0,10}struct|structured.{0,10}respon|well.?struct/i;
+  const forbiddenIfLowScore = /excellent.{0,15}comm|great.{0,15}comm|strong.{0,15}comm/i;
+
+  const validated = (strengths as unknown[]).filter((s) => {
+    if (typeof s !== 'string') return false;
+    if (anyOffTopic && forbiddenIfOffTopic.test(s)) return false;
+    if (anyIncorrect && forbiddenIfIncorrect.test(s)) return false;
+    if (anyStarMissing && forbiddenIfStarMissing.test(s)) return false;
+    if (answerQuality < 40 && forbiddenIfLowScore.test(s)) return false;
+    return true;
+  });
+
+  parsed.strengths = validated.length > 0
+    ? validated
+    : ['No clear strengths could be identified from the answers provided.'];
 }
 
 Deno.serve(async (req: Request) => {
@@ -106,20 +168,15 @@ Deno.serve(async (req: Request) => {
     const sanitize = (s: unknown, maxLen = 500) =>
       typeof s === 'string' ? s.trim().slice(0, maxLen).replace(/[`\\]/g, '') : '';
 
-    // Extract pre-computed speech metrics from client (no defaults — if absent, prompt says unavailable)
     interface FillerEntry { word: string; count: number }
     interface SpeechMetricsRaw {
-      avgWpm?: number;
-      wpm?: number;
+      avgWpm?: number; wpm?: number;
       fillerWords?: FillerEntry[];
-      pauseCount?: number;
-      avgPauseDuration?: number;
-      longestPauseDuration?: number;
-      durationSeconds?: number;
+      pauseCount?: number; avgPauseDuration?: number;
+      longestPauseDuration?: number; durationSeconds?: number;
     }
     const sm: SpeechMetricsRaw = (body.speechMetrics && typeof body.speechMetrics === 'object')
-      ? body.speechMetrics as SpeechMetricsRaw
-      : {};
+      ? body.speechMetrics as SpeechMetricsRaw : {};
 
     const avgWpm: number | null = typeof sm.avgWpm === 'number' ? Math.round(sm.avgWpm)
       : typeof sm.wpm === 'number' ? Math.round(sm.wpm) : null;
@@ -128,7 +185,6 @@ Deno.serve(async (req: Request) => {
     const longestPauseDuration: number | null = typeof sm.longestPauseDuration === 'number' ? sm.longestPauseDuration : null;
     const fillerWords: FillerEntry[] = Array.isArray(sm.fillerWords) ? sm.fillerWords as FillerEntry[] : [];
 
-    // Build human-readable speech metrics block for the prompt
     const wpmLine = avgWpm !== null
       ? `- Speaking pace: ${avgWpm} WPM (ideal interview range: 120–150 WPM)`
       : '- Speaking pace: not available';
@@ -139,7 +195,7 @@ Deno.serve(async (req: Request) => {
       ? `- Filler words detected: ${fillerWords.map((f: FillerEntry) => `"${f.word}" ×${f.count}`).join(', ')}`
       : '- Filler words: none detected';
 
-    const speechMetricsBlock = `MEASURED SPEECH DATA (from actual audio analysis — do NOT re-estimate these):
+    const speechMetricsBlock = `MEASURED SPEECH DATA (from actual audio — do NOT re-estimate):
 ${wpmLine}
 ${pauseLine}
 ${fillerLine}`;
@@ -155,10 +211,7 @@ ${fillerLine}`;
       const questions = Array.isArray(body.questions)
         ? body.questions.slice(0, 5).map((q: unknown) => {
             const item = q as Record<string, unknown>;
-            return {
-              question: sanitize(item.question, 300),
-              answer: sanitize(item.answer, 2000),
-            };
+            return { question: sanitize(item.question, 300), answer: sanitize(item.answer, 2000) };
           })
         : [];
 
@@ -167,129 +220,109 @@ ${fillerLine}`;
         : Array(questions.length).fill(false);
       const hasContentOnly = contentOnlyMask.some(Boolean);
 
-      systemPrompt = `You are a strict, realistic interview performance analyst — like a senior hiring manager who has seen thousands of interviews. Your job is to evaluate the ACTUAL quality of what the candidate said, not what they could have said.
+      systemPrompt = `You are a strict, realistic interview performance analyst — like a senior hiring manager who has seen thousands of interviews. Evaluate ACTUAL answer quality only.
 
-CRITICAL RULES:
-1. Be brutally honest. Do NOT inflate scores. A short, vague, or irrelevant answer must score LOW.
-2. Score each dimension based ONLY on evidence in the actual answers.
-3. Scoring rubric you MUST follow:
-   - Empty / no answer → 0-10
-   - 1-3 word answer or "I don't know" → 5-15
-   - Very short (<10 words), incomplete → 10-30
-   - Generic answer, no examples, no structure → 30-50
-   - Decent answer with some specifics → 50-65
-   - Good answer with clear examples → 65-80
-   - Excellent STAR-structured, specific, professional → 80-100
-4. overall_score = weighted average of ALL answers' quality. If most answers are poor, overall must be LOW (under 40).
-5. Strengths: ONLY list strengths that are CLEARLY and DIRECTLY supported by specific things the candidate actually said. If the answers are weak, vague, or empty, write exactly: "No clear strengths could be identified from the answers provided." — do NOT invent strengths.
-6. Improvements: must be specific, actionable, and tied to the ACTUAL weaknesses observed in the answers.
-7. For "confidence" (delivery confidence estimate 0-100): factor in the measured speech data provided — pace vs ideal range, filler word frequency, pause frequency — as well as answer completeness and hesitation markers visible in the transcript. A fast, filler-heavy, pause-riddled delivery should lower this score even if answers are decent.
-8. ai_feedback: be honest and direct, like a real coach. Point out weak answers specifically. Do NOT say "great effort" if the answers were poor.
-9. Return valid JSON only, no markdown, no extra text.
+SCORING RUBRIC (follow exactly):
+- Empty / no answer / "I don't know" → 0-10
+- 1-5 words → 5-20
+- Very short (<10 words) → 10-30
+- Generic, no examples, no structure → 30-50
+- Decent with some specifics → 50-65
+- Good with clear examples → 65-80
+- Excellent STAR-structured, specific, professional → 80-100
 
-ANSWER DIAGNOSIS RULES (new — follow for every question):
-For each answer, you must diagnose it across 8 dimensions. Be honest, evidence-based, and specific. Do not invent or hallucinate evidence.
+GLOBAL RULES:
+1. overall_score = honest weighted average. Weak majority → under 40.
+2. confidence (0-100): use MEASURED SPEECH DATA only — pace vs 120-150 WPM ideal, filler density, pause frequency, plus answer completeness. Never invent speech values.
+3. ai_feedback: direct, honest coaching. Name weak answers specifically. No "great effort" for poor answers.
+4. Return valid JSON only.
 
-Dimensions:
-- relevance: Does the answer address what was asked?
-- accuracy: Is the content factually/technically correct for the role?
-- completeness: Does the answer cover all expected aspects?
-- logic_coherence: Is the answer internally consistent and logically structured?
-- specificity: Does the answer include concrete details, numbers, named examples?
-- supporting_example: Is there a real example from the candidate's experience?
-- star_structure: Is the Situation-Task-Action-Result framework present? (mark Not Applicable for knowledge questions)
-- communication_clarity: Is the answer well-organized and easy to follow?
+STRENGTHS — STRICT EVIDENCE RULES:
+- ONLY list a strength directly supported by actual words the candidate said.
+- FORBIDDEN contradictions:
+  * accuracy = "Incorrect" → NEVER claim "technical knowledge" or "accurate understanding"
+  * relevance = "Off-topic" → NEVER claim "answered the question clearly" or "relevant response"
+  * star_structure = "Missing" or "Weak" → NEVER claim "STAR structure" or "well-structured"
+  * answer_quality < 40 → NEVER claim "excellent communication" or "great delivery"
+- Delivery strengths (pace, pronunciation) are valid ONLY if speech data confirms them.
+- If no genuine strength exists: return ["No clear strengths could be identified from the answers provided."]
 
-Valid statuses: "Excellent" | "Good" | "Acceptable" | "Needs Improvement" | "Weak" | "Off-topic" | "Incorrect" | "Incomplete" | "Contradictory" | "Unclear" | "Not Applicable"
-Valid severities: "none" | "low" | "medium" | "high" | "critical"
+EMPTY / INVALID ANSWER HANDLING:
+- Empty / silence / "skip" / only filler words → primary_issue = "no_answer"; all diagnosis dimensions = "Not Applicable" except completeness = "Missing" (severity critical); answer_score = 0; coach_feedback is supportive and explains what an answer should include.
+- "I don't know" → primary_issue = "no_answer"; do NOT call it off_topic; supportive coach_feedback; improved_answer shows a starting direction.
+- Nonsensical / random words → primary_issue = "nonsensical"; relevance = "Off-topic" severity critical.
 
-SCORE CEILING RULES — enforce these on answer_quality:
-- Answer is off-topic (relevance status = "Off-topic", severity ≥ high) → answer_quality ceiling 15
-- Answer is factually incorrect (accuracy status = "Incorrect", severity ≥ high) → answer_quality ceiling 30
-- Answer is contradictory (logic_coherence = "Contradictory", severity ≥ high) → answer_quality ceiling 25
-- Answer is empty or near-empty → answer_quality ceiling 10
-- Answer is relevant but very incomplete (completeness severity ≥ high) → answer_quality ceiling 45
-- Generic answer, no examples at all → answer_quality ceiling 55
+ANSWER CLASSIFICATION (primary_issue values):
+"off_topic" | "incorrect" | "incomplete" | "vague" | "contradictory" | "nonsensical" | "no_answer" | "skipped" | "acceptable" | "strong"
 
-IMPORTANT RULES FOR DIAGNOSIS:
-- "evidence" field: quote or closely paraphrase the actual words from the answer. Empty string if no evidence applies.
-- "reason" field: 1-2 sentences explaining the diagnosis.
-- "how_to_improve" field: specific actionable guidance. Empty string only for "Excellent" or "Not Applicable".
-- Never accuse the user of lying. For suspicious claims use "Credibility: Questionable" in reason.
-- Use respectful coaching language. Never say "stupid", "nonsense", "ridiculous".
-- Short but directly relevant answer = "Incomplete", not "Off-topic".
-- Generic claim without evidence (e.g. "I work hard") → specificity = "Weak", supporting_example = "Missing" or "Weak".`;
+ANSWER DIAGNOSIS (8 dimensions):
+- relevance: Does it address the question?
+- accuracy: Factually/technically correct for the role?
+- completeness: Covers all expected aspects?
+- logic_coherence: Internally consistent and logical?
+- specificity: Concrete details, numbers, named examples?
+- supporting_example: Real example from candidate's experience?
+- star_structure: STAR framework? Mark "Not Applicable" for factual/knowledge/definition questions.
+- communication_clarity: Well-organized and easy to follow?
+
+Valid statuses: "Excellent"|"Good"|"Acceptable"|"Needs Improvement"|"Weak"|"Off-topic"|"Incorrect"|"Incomplete"|"Contradictory"|"Unclear"|"Not Applicable"|"Missing"
+Valid severities: "none"|"low"|"medium"|"high"|"critical"
+
+Diagnosis field rules:
+- evidence: quote or closely paraphrase actual words. Empty string if not applicable.
+- reason: 1-2 sentences. Honest, evidence-based.
+- how_to_improve: specific and actionable. Empty only for "Excellent" or "Not Applicable".
+- Never accuse of lying. Use "Questionable credibility" for suspicious claims.
+
+STAR SUB-DIAGNOSIS (star_sub_diagnosis):
+- Only when star_structure IS applicable (behavioral questions: "tell me about a time...", "describe a situation...", etc.)
+- If not applicable for this question type: set all 4 parts to "not_applicable"
+- Valid per part: "present" | "partial" | "missing" | "not_applicable"
+
+SCORE CEILING RULES (enforced by server too):
+- relevance = "Off-topic" → answer_score ceiling 15
+- accuracy = "Incorrect" → answer_score ceiling 30
+- logic_coherence = "Contradictory" → answer_score ceiling 25
+- completeness = "Missing" → answer_score ceiling 10
+- completeness = "Incomplete" + severity high → ceiling 45
+- specificity = "Weak" AND supporting_example = "Weak" → ceiling 55
+
+COACHING FIELDS (per question — be concise):
+- what_interviewer_expected: 1-2 sentences. What a good answer should have covered.
+- coach_feedback: 2-3 direct sentences — what went wrong, why it matters in a real interview, how to fix it.
+- improved_answer: 2-4 sentences. A model answer appropriate for this role and experience level, in the interview language. Must address the ACTUAL question. Do NOT copy the user's incorrect content.
+
+CONSISTENCY CHECK before returning:
+- If relevance = "Off-topic": answer_score must be ≤15, no content strengths, feedback mentions irrelevance, improved_answer addresses the actual question.
+- If accuracy = "Incorrect": answer_score must be ≤30, feedback identifies the specific error, improved_answer corrects it.
+- All fields must agree with each other. Run this check mentally before outputting.`;
+
+      const diagExample = `{"relevance":{"status":"Off-topic","severity":"critical","reason":"The answer discusses personal hobbies instead of the accounting concept asked.","evidence":"I like football and travelling.","how_to_improve":"Start with a direct definition of what was asked."},"accuracy":{"status":"Not Applicable","severity":"none","reason":"Cannot assess — answer is entirely off-topic.","evidence":"","how_to_improve":""},"completeness":{"status":"Missing","severity":"critical","reason":"No relevant content was provided.","evidence":"","how_to_improve":"Cover the definition, comparison, and an example."},"logic_coherence":{"status":"Acceptable","severity":"low","reason":"The sentence is grammatically coherent, just unrelated.","evidence":"","how_to_improve":""},"specificity":{"status":"Not Applicable","severity":"none","reason":"No relevant content to assess.","evidence":"","how_to_improve":""},"supporting_example":{"status":"Not Applicable","severity":"none","reason":"No relevant content.","evidence":"","how_to_improve":""},"star_structure":{"status":"Not Applicable","severity":"none","reason":"Not a behavioral question.","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"The response is grammatically clear.","evidence":"","how_to_improve":""}}`;
 
       userPrompt = isArabic
-        ? `أنت محلّل مقابلات صارم وواقعي. قيّم أداء هذا المرشح لوظيفة ${role} (تعليم: ${education}, خبرة: ${experience}).
+        ? `قيّم أداء هذا المرشح لوظيفة ${role} (تعليم: ${education}، خبرة: ${experience}).
 
 ${speechMetricsBlock}
-${hasContentOnly ? `\nتنبيه: بعض الإجابات المحددة بـ [محتوى فقط] قُدِّمت بلغة مختلفة عن لغة المقابلة. لهذه الإجابات: قيّم المحتوى والأفكار والبنية فقط — تجاهل درجات اللغة والتواصل اللفظي لها في مقياس communication.\n` : ''}
-إجاباته الفعلية:
-${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. السؤال: ${q.question}\nالإجابة: "${q.answer || '(لم يُقدِّم إجابة)'}"${contentOnlyMask[i] ? ' [محتوى فقط — تجاهل تقييم اللغة]' : ''}`).join('\n\n')}
+${hasContentOnly ? '\nملاحظة: إجابات محددة بـ [محتوى فقط] قُدِّمت بلغة مختلفة. قيّم المحتوى والأفكار فقط — تجاهل اللغة والتواصل اللفظي لها.\n' : ''}
+الإجابات الفعلية:
+${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. السؤال: ${q.question}\nالإجابة: "${q.answer || '(لم تُقدَّم إجابة)'}"${contentOnlyMask[i] ? ' [محتوى فقط]' : ''}`).join('\n\n')}
 
-تعليمات صارمة يجب اتباعها:
-1. قيّم كل إجابة بناءً على: الصلة بالسؤال، الاكتمال، التحديد، الاحترافية، وجود أمثلة، منهج STAR.
-2. سلّم الدرجات وفق هذا المقياس الصارم:
-   - إجابة فارغة أو "لا أعرف" → 0-15
-   - إجابة قصيرة جداً (أقل من 10 كلمات) → 10-30
-   - إجابة عامة بدون أمثلة → 30-50
-   - إجابة جيدة مع أمثلة → 60-80
-   - إجابة ممتازة بمنهج STAR → 80-100
-3. overall_score = متوسط حقيقي لجودة كل الإجابات. إذا كانت معظم الإجابات ضعيفة، يجب أن تكون النتيجة الإجمالية منخفضة (أقل من 40).
-4. نقاط القوة: اذكرها فقط إذا كانت مدعومة بوضوح من الإجابات الفعلية. إذا كانت الإجابات ضعيفة اكتب بالضبط: ["لم تتضح نقاط قوة واضحة من إجابات هذه الجلسة."]
-5. "confidence" (تقدير الثقة في الإلقاء): احسبه بناءً على بيانات الكلام المقاسة أعلاه (وتيرة الكلام مقارنة بالمثالية، كثافة كلمات الحشو، تكرار التوقفات) إضافةً إلى اكتمال الإجابات وعلامات التردد في النص.
-6. اكتب إجابة مثالية لكل سؤال بالعربية بمنهج STAR مناسبة لمستوى ${experience} في ${role}.
+أعد JSON فقط (بدون markdown)، جميع الحقول يجب أن تعكس الإجابات الفعلية.
+الهيكل المطلوب لكل سؤال في per_question_diagnosis:
+{"question":"...","answer_classification":{"primary_issue":"off_topic|incorrect|incomplete|vague|no_answer|acceptable|strong","secondary_issues":[]},"diagnosis":{...8 dimensions...},"star_sub_diagnosis":{"situation":"present|partial|missing|not_applicable","task":"...","action":"...","result":"..."},"what_interviewer_expected":"...","coach_feedback":"...","improved_answer":"..."}
 
-تعليمات تشخيص الإجابات (جديدة — طبّقها على كل سؤال):
-لكل إجابة، يجب تشخيصها عبر 8 أبعاد. كن صادقاً ومحدداً ومبنياً على الأدلة الفعلية. لا تخترع أدلة.
-
-الأبعاد:
-- relevance: هل تتناول الإجابة ما طُرح في السؤال؟
-- accuracy: هل المحتوى دقيق مهنياً/تقنياً بما يتناسب مع الدور؟
-- completeness: هل الإجابة تغطي جميع الجوانب المتوقعة؟
-- logic_coherence: هل الإجابة متسقة داخلياً ومنطقياً؟
-- specificity: هل تتضمن الإجابة تفاصيل ملموسة أو أرقاماً أو أمثلة محددة؟
-- supporting_example: هل يوجد مثال حقيقي من تجربة المرشح؟
-- star_structure: هل يوجد منهج STAR؟ (اكتب "Not Applicable" للأسئلة المعرفية)
-- communication_clarity: هل الإجابة منظمة وسهلة الفهم؟
-
-قواعد سقف الدرجات:
-- إجابة خارج الموضوع (relevance = "Off-topic") → سقف answer_quality = 15
-- إجابة غلط فعلياً (accuracy = "Incorrect") → سقف answer_quality = 30
-- إجابة متناقضة (logic_coherence = "Contradictory") → سقف answer_quality = 25
-- إجابة فارغة → سقف answer_quality = 10
-- إجابة ذات صلة لكن ناقصة جداً → سقف answer_quality = 45
-- إجابة عامة بلا أمثلة → سقف answer_quality = 55
-
-أعد JSON فقط، جميع القيم يجب أن تعكس الإجابات الفعلية:
-{"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"strengths":["نقطة قوة حقيقية مدعومة بالإجابات أو الجملة الثابتة إذا لم توجد"],"improvements":["تحسين محدد مبني على ضعف فعلي في الإجابة 1","تحسين محدد 2","تحسين محدد 3"],"ai_feedback":"تغذية راجعة صريحة وصادقة كمدرب مقابلات حقيقي، تشير إلى الإجابات الضعيفة بالتحديد.","recommendations":[{"title":"توصية محددة 1","description":"نصيحة عملية 1"},{"title":"توصية محددة 2","description":"نصيحة عملية 2"},{"title":"توصية محددة 3","description":"نصيحة عملية 3"}],"ideal_answers":[{"question":"نص السؤال 1","ideal_answer":"إجابة مثالية بمنهج STAR"},{"question":"نص السؤال 2","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 3","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 4","ideal_answer":"إجابة مثالية"},{"question":"نص السؤال 5","ideal_answer":"إجابة مثالية"}],"per_question_diagnosis":[{"question":"نص السؤال 1","diagnosis":{"relevance":{"status":"Off-topic","severity":"critical","reason":"الإجابة لا تتناول السؤال المطروح.","evidence":"أنا أحب كرة القدم والسفر.","how_to_improve":"ابدأ بالإجابة المباشرة على ما طُرح."},"accuracy":{"status":"Not Applicable","severity":"none","reason":"لا يمكن تقييم الدقة لأن الإجابة خارج الموضوع.","evidence":"","how_to_improve":""},"completeness":{"status":"Weak","severity":"high","reason":"لم يُقدَّم أي محتوى ذي صلة.","evidence":"","how_to_improve":"غطِّ جميع الجوانب المطلوبة."},"logic_coherence":{"status":"Acceptable","severity":"low","reason":"الجملة متماسكة نحوياً.","evidence":"","how_to_improve":""},"specificity":{"status":"Weak","severity":"medium","reason":"لا توجد تفاصيل محددة تتعلق بالسؤال.","evidence":"","how_to_improve":"أضف أمثلة وأرقاماً ومواقف محددة."},"supporting_example":{"status":"Not Applicable","severity":"none","reason":"لا يوجد محتوى ذي صلة.","evidence":"","how_to_improve":""},"star_structure":{"status":"Not Applicable","severity":"none","reason":"لا ينطبق على هذا النوع من الأسئلة.","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"الإجابة واضحة نحوياً.","evidence":"","how_to_improve":""}}},{"question":"نص السؤال 2","diagnosis":{"relevance":{"status":"Good","severity":"low","reason":"الإجابة تتناول السؤال.","evidence":"","how_to_improve":"أضف أمثلة محددة أكثر."},"accuracy":{"status":"Acceptable","severity":"low","reason":"لا توجد أخطاء واضحة.","evidence":"","how_to_improve":""},"completeness":{"status":"Needs Improvement","severity":"medium","reason":"الإجابة تغطي الأساسيات لكن تفتقر لجوانب مهمة.","evidence":"","how_to_improve":"تناول أيضاً النقطة س و ص."},"logic_coherence":{"status":"Good","severity":"none","reason":"الإجابة منطقية ومتسلسلة.","evidence":"","how_to_improve":""},"specificity":{"status":"Weak","severity":"medium","reason":"الادعاءات مبهمة.","evidence":"أنا دائماً أعمل بجد.","how_to_improve":"استبدل الادعاءات العامة بأمثلة محددة."},"supporting_example":{"status":"Incomplete","severity":"medium","reason":"مثال جزئي لكن بلا تفاصيل كافية.","evidence":"","how_to_improve":"أكمل المثال بالموقف والإجراء والنتيجة."},"star_structure":{"status":"Incomplete","severity":"medium","reason":"الموقف موجود لكن الإجراء والنتيجة غائبان.","evidence":"","how_to_improve":"أضف ما قمت به والنتيجة التي تحققت."},"communication_clarity":{"status":"Good","severity":"none","reason":"الإجابة سهلة المتابعة.","evidence":"","how_to_improve":""}}},{"question":"نص السؤال 3","diagnosis":{"relevance":{"status":"Excellent","severity":"none","reason":"","evidence":"","how_to_improve":""},"accuracy":{"status":"Excellent","severity":"none","reason":"","evidence":"","how_to_improve":""},"completeness":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"logic_coherence":{"status":"Excellent","severity":"none","reason":"","evidence":"","how_to_improve":""},"specificity":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"supporting_example":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"star_structure":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Excellent","severity":"none","reason":"","evidence":"","how_to_improve":""}}},{"question":"نص السؤال 4","diagnosis":{"relevance":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"accuracy":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"completeness":{"status":"Needs Improvement","severity":"medium","reason":"","evidence":"","how_to_improve":""},"logic_coherence":{"status":"Good","severity":"none","reason":"","evidence":"","how_to_improve":""},"specificity":{"status":"Needs Improvement","severity":"medium","reason":"","evidence":"","how_to_improve":""},"supporting_example":{"status":"Weak","severity":"medium","reason":"","evidence":"","how_to_improve":""},"star_structure":{"status":"Not Applicable","severity":"none","reason":"","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"","evidence":"","how_to_improve":""}}},{"question":"نص السؤال 5","diagnosis":{"relevance":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"accuracy":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"completeness":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"logic_coherence":{"status":"Good","severity":"none","reason":"","evidence":"","how_to_improve":""},"specificity":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"supporting_example":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"star_structure":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"","evidence":"","how_to_improve":""}}}]}`
-        : `You are a strict, realistic interview coach evaluating a candidate for a ${role} role (Education: ${education}, Experience: ${experience}).
+{"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"strengths":["نقطة قوة حقيقية مدعومة من الإجابات الفعلية"],"improvements":["تحسين محدد 1","تحسين محدد 2","تحسين محدد 3"],"ai_feedback":"تغذية راجعة صادقة ومباشرة.","recommendations":[{"title":"توصية 1","description":"نصيحة 1"},{"title":"توصية 2","description":"نصيحة 2"},{"title":"توصية 3","description":"نصيحة 3"}],"ideal_answers":[{"question":"السؤال الفعلي 1","ideal_answer":"إجابة مثالية بمنهج STAR"},{"question":"السؤال الفعلي 2","ideal_answer":""},{"question":"السؤال الفعلي 3","ideal_answer":""},{"question":"السؤال الفعلي 4","ideal_answer":""},{"question":"السؤال الفعلي 5","ideal_answer":""}],"per_question_diagnosis":[{"question":"السؤال الفعلي 1","answer_classification":{"primary_issue":"off_topic","secondary_issues":[]},"diagnosis":${diagExample},"star_sub_diagnosis":{"situation":"not_applicable","task":"not_applicable","action":"not_applicable","result":"not_applicable"},"what_interviewer_expected":"تعريف للأصول وتعريف للخصوم مع مثال مقارن.","coach_feedback":"الإجابة لا تتناول السؤال المطروح. في المقابلة الحقيقية، هذا يعني أن المرشح لا يعرف الأساسيات. ابدأ دائماً بالإجابة المباشرة على ما طُرح.","improved_answer":"الأصول هي الموارد التي تمتلكها المنشأة وتمنحها قيمة مستقبلية، مثل النقد أو المخزون. الخصوم هي الالتزامات المستحقة على المنشأة، مثل القروض. مثلاً: السيارة التجارية أصل، والقرض الذي اشتُريت به خصم."},{"question":"السؤال الفعلي 2","answer_classification":{"primary_issue":"incomplete","secondary_issues":["vague"]},"diagnosis":{"relevance":{"status":"Good","severity":"low","reason":"الإجابة تتناول السؤال لكنها ناقصة.","evidence":"","how_to_improve":"أضف تفاصيل وأمثلة محددة."},"accuracy":{"status":"Acceptable","severity":"low","reason":"لا أخطاء واضحة.","evidence":"","how_to_improve":""},"completeness":{"status":"Needs Improvement","severity":"medium","reason":"تغطي الأساسيات لكن تفتقر لجوانب مهمة.","evidence":"","how_to_improve":"تناول أيضاً النقطة س وص."},"logic_coherence":{"status":"Good","severity":"none","reason":"الإجابة منطقية.","evidence":"","how_to_improve":""},"specificity":{"status":"Weak","severity":"medium","reason":"ادعاءات مبهمة.","evidence":"أنا أعمل بجد دائماً.","how_to_improve":"استبدل بأمثلة محددة."},"supporting_example":{"status":"Incomplete","severity":"medium","reason":"مثال جزئي بلا تفاصيل.","evidence":"","how_to_improve":"أكمل بالموقف والإجراء والنتيجة."},"star_structure":{"status":"Incomplete","severity":"medium","reason":"الموقف موجود لكن الإجراء والنتيجة غائبان.","evidence":"","how_to_improve":"أضف ما قمت به ونتيجة قابلة للقياس."},"communication_clarity":{"status":"Good","severity":"none","reason":"الإجابة سهلة الفهم.","evidence":"","how_to_improve":""}},"star_sub_diagnosis":{"situation":"present","task":"missing","action":"partial","result":"missing"},"what_interviewer_expected":"موقف محدد، وصف الدور والمسؤولية، الإجراءات المتخذة، ونتيجة قابلة للقياس.","coach_feedback":"الإجابة تبدأ جيداً لكنها تفتقر للتفاصيل والنتيجة. في المقابلة، غياب النتيجة يجعل الإجابة غير مكتملة. استخدم منهج STAR بالكامل.","improved_answer":"في دوري السابق واجهت مشكلة تأخر في تسليم المشروع. حددت السبب الرئيسي وهو عدم التنسيق بين الفرق، وأنشأت اجتماعاً أسبوعياً للمتابعة. نتيجةً لذلك، تم تسليم المشروع في الموعد المحدد وبجودة أعلى من المتوقع."}]}`
+        : `You are evaluating a candidate for ${role} (Education: ${education}, Experience: ${experience}).
 
 ${speechMetricsBlock}
-
+${hasContentOnly ? '\nNOTE: Answers marked [CONTENT ONLY] were in a different language. Evaluate ideas, structure, relevance only — do NOT penalize language or communication style.\n' : ''}
 Candidate's actual answers:
-${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. Q: ${q.question}\n   A: "${q.answer || '(no answer given)'}"${contentOnlyMask[i] ? ' [CONTENT ONLY — language mismatch, skip language/communication scoring for this answer]' : ''}`).join('\n\n')}
-${hasContentOnly ? '\nNOTE: Answers marked [CONTENT ONLY] were answered in a different language than the interview language. For these answers ONLY: evaluate ideas, structure, relevance, and completeness — do NOT penalize language or communication style. Adjust overall communication score accordingly.' : ''}
+${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. Q: ${q.question}\n   A: "${q.answer || '(no answer given)'}"${contentOnlyMask[i] ? ' [CONTENT ONLY]' : ''}`).join('\n\n')}
 
-STRICT EVALUATION RULES — follow exactly:
-1. Evaluate each answer on: relevance, completeness, specificity, professionalism, use of examples, STAR structure.
-2. Apply this scoring scale — do NOT deviate:
-   - Empty / "I don't know" / no answer → 0-15
-   - 1-5 words → 5-20
-   - Very short (<10 words), incomplete → 10-30
-   - Generic, no examples, no structure → 30-50
-   - Decent answer with some specifics → 50-65
-   - Good answer with clear examples → 65-80
-   - Excellent STAR-structured, specific → 80-100
-3. overall_score = honest weighted average of ALL answers. If most answers are short/vague/empty, overall MUST be under 40.
-4. strengths: ONLY list if clearly supported by actual answer content. If answers are weak, return exactly: ["No clear strengths could be identified from the answers provided."]
-5. "confidence" (delivery confidence estimate 0-100): base it on the MEASURED SPEECH DATA above — pace vs ideal range (120-150 WPM), filler word density, pause frequency — plus answer completeness and hesitation markers in the transcript. Do NOT invent or re-estimate speech values.
-6. Write a professional ideal answer for each question using STAR, tailored to ${experience}-level ${role}.
-7. ai_feedback: be direct and honest like a real coach. Name the weak answers specifically. Do NOT pad with generic praise.
+Return ONLY valid JSON. Every field must reflect the actual answer quality. Required structure per question in per_question_diagnosis:
+{"question":"...","answer_classification":{"primary_issue":"off_topic|incorrect|incomplete|vague|no_answer|acceptable|strong","secondary_issues":[]},"diagnosis":{...8 dimensions...},"star_sub_diagnosis":{"situation":"present|partial|missing|not_applicable","task":"...","action":"...","result":"..."},"what_interviewer_expected":"1-2 sentences.","coach_feedback":"2-3 direct coaching sentences.","improved_answer":"2-4 sentence model answer in the interview language."}
 
-Return ONLY valid JSON, all values must reflect actual answer quality:
-{"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"strengths":["Genuine strength from answers, or the fixed message if none"],"improvements":["Specific improvement tied to weak answer 1","Specific improvement 2","Specific improvement 3"],"ai_feedback":"Direct, honest coaching feedback naming which answers were weak and why.","recommendations":[{"title":"Specific recommendation 1","description":"Practical advice 1"},{"title":"Specific recommendation 2","description":"Practical advice 2"},{"title":"Specific recommendation 3","description":"Practical advice 3"}],"ideal_answers":[{"question":"Actual Q1 text","ideal_answer":"STAR ideal answer for Q1"},{"question":"Actual Q2 text","ideal_answer":"Ideal answer for Q2"},{"question":"Actual Q3 text","ideal_answer":"Ideal answer for Q3"},{"question":"Actual Q4 text","ideal_answer":"Ideal answer for Q4"},{"question":"Actual Q5 text","ideal_answer":"Ideal answer for Q5"}],"per_question_diagnosis":[{"question":"Actual Q1 text","diagnosis":{"relevance":{"status":"Off-topic","severity":"critical","reason":"The answer does not address the question.","evidence":"I like football.","how_to_improve":"Start by directly addressing what was asked."},"accuracy":{"status":"Not Applicable","severity":"none","reason":"Cannot assess accuracy since the answer is off-topic.","evidence":"","how_to_improve":""},"completeness":{"status":"Weak","severity":"high","reason":"No relevant content was provided.","evidence":"","how_to_improve":"Include all key aspects of the answer."},"logic_coherence":{"status":"Acceptable","severity":"low","reason":"The sentence is grammatically coherent.","evidence":"","how_to_improve":""},"specificity":{"status":"Weak","severity":"medium","reason":"No specific details related to the question.","evidence":"","how_to_improve":"Add concrete examples, numbers, or named situations."},"supporting_example":{"status":"Not Applicable","severity":"none","reason":"No relevant content to build an example from.","evidence":"","how_to_improve":""},"star_structure":{"status":"Not Applicable","severity":"none","reason":"Not applicable to this question type or answer.","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"The response is grammatically clear.","evidence":"","how_to_improve":""}}},{"question":"Actual Q2 text","diagnosis":{"relevance":{"status":"Good","severity":"low","reason":"The answer addresses the question.","evidence":"","how_to_improve":"Add more specific examples."},"accuracy":{"status":"Acceptable","severity":"low","reason":"No obvious factual errors.","evidence":"","how_to_improve":""},"completeness":{"status":"Needs Improvement","severity":"medium","reason":"The answer covers the basics but misses key aspects.","evidence":"","how_to_improve":"Also address X and Y."},"logic_coherence":{"status":"Good","severity":"none","reason":"The answer follows a logical flow.","evidence":"","how_to_improve":""},"specificity":{"status":"Weak","severity":"medium","reason":"Claims are vague.","evidence":"I always work hard.","how_to_improve":"Replace general claims with specific examples."},"supporting_example":{"status":"Incomplete","severity":"medium","reason":"A partial example is mentioned but lacks detail.","evidence":"","how_to_improve":"Complete the example with situation, action, and result."},"star_structure":{"status":"Incomplete","severity":"medium","reason":"Situation is present but action and result are missing.","evidence":"","how_to_improve":"Add what you did and what the outcome was."},"communication_clarity":{"status":"Good","severity":"none","reason":"The answer is easy to follow.","evidence":"","how_to_improve":""}}},{"question":"Actual Q3 text","diagnosis":{"relevance":{"status":"Excellent","severity":"none","reason":"","evidence":"","how_to_improve":""},"accuracy":{"status":"Excellent","severity":"none","reason":"","evidence":"","how_to_improve":""},"completeness":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"logic_coherence":{"status":"Excellent","severity":"none","reason":"","evidence":"","how_to_improve":""},"specificity":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"supporting_example":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"star_structure":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Excellent","severity":"none","reason":"","evidence":"","how_to_improve":""}}},{"question":"Actual Q4 text","diagnosis":{"relevance":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"accuracy":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"completeness":{"status":"Needs Improvement","severity":"medium","reason":"","evidence":"","how_to_improve":""},"logic_coherence":{"status":"Good","severity":"none","reason":"","evidence":"","how_to_improve":""},"specificity":{"status":"Needs Improvement","severity":"medium","reason":"","evidence":"","how_to_improve":""},"supporting_example":{"status":"Weak","severity":"medium","reason":"","evidence":"","how_to_improve":""},"star_structure":{"status":"Not Applicable","severity":"none","reason":"","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"","evidence":"","how_to_improve":""}}},{"question":"Actual Q5 text","diagnosis":{"relevance":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"accuracy":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"completeness":{"status":"Good","severity":"low","reason":"","evidence":"","how_to_improve":""},"logic_coherence":{"status":"Good","severity":"none","reason":"","evidence":"","how_to_improve":""},"specificity":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"supporting_example":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"star_structure":{"status":"Acceptable","severity":"low","reason":"","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"","evidence":"","how_to_improve":""}}}]}`;
+{"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"strengths":["Genuine strength supported by actual answer content, or the fixed no-strengths message"],"improvements":["Specific improvement tied to actual weakness 1","Specific improvement 2","Specific improvement 3"],"ai_feedback":"Direct, honest coaching naming which answers were weak and exactly why.","recommendations":[{"title":"Specific rec 1","description":"Practical advice 1"},{"title":"Specific rec 2","description":"Practical advice 2"},{"title":"Specific rec 3","description":"Practical advice 3"}],"ideal_answers":[{"question":"Actual Q1 text","ideal_answer":"STAR ideal answer at ${experience} level"},{"question":"Actual Q2 text","ideal_answer":""},{"question":"Actual Q3 text","ideal_answer":""},{"question":"Actual Q4 text","ideal_answer":""},{"question":"Actual Q5 text","ideal_answer":""}],"per_question_diagnosis":[{"question":"Actual Q1 text","answer_classification":{"primary_issue":"off_topic","secondary_issues":[]},"diagnosis":${diagExample},"star_sub_diagnosis":{"situation":"not_applicable","task":"not_applicable","action":"not_applicable","result":"not_applicable"},"what_interviewer_expected":"A definition of assets, a definition of liabilities, and a simple comparison example.","coach_feedback":"The answer was entirely unrelated to the accounting concept asked. In a real interview this signals a fundamental knowledge gap. Always begin by directly addressing what was asked.","improved_answer":"Assets are resources owned by a business that provide future economic value, such as cash, inventory, or equipment. Liabilities are obligations the business owes, such as loans or accounts payable. For example, a company vehicle is an asset, while the loan used to purchase it is a liability."},{"question":"Actual Q2 text","answer_classification":{"primary_issue":"incomplete","secondary_issues":["vague"]},"diagnosis":{"relevance":{"status":"Good","severity":"low","reason":"The answer addresses the question but is incomplete.","evidence":"","how_to_improve":"Add specific examples and a measurable result."},"accuracy":{"status":"Acceptable","severity":"low","reason":"No obvious factual errors.","evidence":"","how_to_improve":""},"completeness":{"status":"Needs Improvement","severity":"medium","reason":"Covers basics but misses key aspects.","evidence":"","how_to_improve":"Also address X and Y."},"logic_coherence":{"status":"Good","severity":"none","reason":"Logical flow.","evidence":"","how_to_improve":""},"specificity":{"status":"Weak","severity":"medium","reason":"Claims are vague with no concrete details.","evidence":"I always work hard.","how_to_improve":"Replace with a specific situation and measurable result."},"supporting_example":{"status":"Incomplete","severity":"medium","reason":"Partial example mentioned but lacks detail.","evidence":"","how_to_improve":"Complete the example with action taken and the outcome."},"star_structure":{"status":"Incomplete","severity":"medium","reason":"Situation present but action and result missing.","evidence":"","how_to_improve":"Add what you did and a quantifiable result."},"communication_clarity":{"status":"Good","severity":"none","reason":"Easy to follow.","evidence":"","how_to_improve":""}},"star_sub_diagnosis":{"situation":"present","task":"missing","action":"partial","result":"missing"},"what_interviewer_expected":"A specific situation, your role and responsibility, the actions you took, and a measurable result.","coach_feedback":"The answer starts well but lacks a result and specific actions. Without a result, interviewers cannot assess your impact. Always complete the STAR loop with a concrete outcome.","improved_answer":"In my previous role, the team was behind schedule on a critical project. I mapped the blockers, set up a daily 15-minute sync, and redistributed tasks based on availability. We delivered on time and the client extended the contract for another year."}]}`;
 
     } else if (mode === 'presentation') {
       const topic = sanitize(body.topic, 200);
@@ -303,84 +336,43 @@ Return ONLY valid JSON, all values must reflect actual answer quality:
         );
       }
 
-      // Compute word count and duration from speech metrics for rubric enforcement
       const transcriptWordCount = transcript.trim().split(/\s+/).filter(Boolean).length;
       const durationSec: number | null = typeof sm.durationSeconds === 'number' ? sm.durationSeconds : null;
 
       const contentOnlyNote = contentOnly
-        ? '\nIMPORTANT: This presentation was recorded in a different language than the selected presentation language. Evaluate CONTENT ONLY: structure, organization, clarity, message, relevance. Do NOT evaluate English/Arabic fluency, grammar, or pronunciation. Do NOT score communication_effectiveness based on language quality — only on message clarity and content.\n'
+        ? '\nIMPORTANT: This presentation was recorded in a different language. Evaluate CONTENT ONLY: structure, organization, clarity, message, relevance. Do NOT penalize language fluency or pronunciation.\n'
         : '';
 
-      systemPrompt = `You are a strict, professional presentation coach. You evaluate recorded presentations honestly and directly, like a real coach preparing someone for a professional or academic setting.
+      systemPrompt = `You are a strict, professional presentation coach. Evaluate recorded presentations honestly and directly.
 
-SCORING RUBRIC — follow exactly:
+SCORING RUBRIC:
 0–15: Empty, no content, completely off-topic, or incoherent
 16–35: Very weak — extremely short (<30 words), no structure, generic/irrelevant ideas
-36–55: Basic — some relevant ideas, weak organization, limited examples, missing introduction or conclusion
+36–55: Basic — some relevant ideas, weak organization, limited examples, missing intro or conclusion
 56–75: Good — clear topic, logical flow, reasonable supporting details, identifiable structure
-76–90: Strong — well organized, clear introduction/body/conclusion, good transitions, effective delivery
-91–100: Excellent — professional structure, engaging, compelling examples, memorable conclusion, polished delivery
+76–90: Strong — well organized, clear intro/body/conclusion, good transitions, effective delivery
+91–100: Excellent — professional structure, engaging, compelling examples, memorable conclusion
 
 CRITICAL RULES:
-1. Be brutally honest. Do NOT inflate scores to be encouraging.
+1. Be brutally honest. Do NOT inflate scores.
 2. Under 30 words → overall_score MUST be below 30. Under 80 words → below 45. Under 150 words → below 60.
-3. Off-topic presentations → communication_effectiveness MUST be below 30.
-4. strengths: ONLY list if clearly supported by the actual transcript or speech data. If the presentation is weak, write exactly: ["No clear strengths could be identified from this presentation."]
-5. improvements: be specific and actionable, tied to actual weaknesses observed.
-6. score_reasons: explain in 1–2 honest sentences WHY each score was given. Reference specific evidence from the transcript.
-7. structure_review: evaluate each section as a professional coach would — be specific, quote or reference what the speaker actually said.
-8. ai_feedback: 2–4 sentences of direct, honest coaching. Name specific weaknesses. Do NOT pad with generic praise.
-9. Return valid JSON only, no markdown, no extra text.${contentOnlyNote}`;
+3. Off-topic → communication_effectiveness MUST be below 30.
+4. strengths: ONLY list if clearly supported by transcript or speech data. If weak: ["No clear strengths could be identified from this presentation."]
+5. improvements: specific and actionable, tied to actual weaknesses.
+6. score_reasons: 1–2 honest sentences per score referencing actual evidence.
+7. structure_review: evaluate each section specifically, reference what was actually said.
+8. ai_feedback: 2–4 direct coaching sentences. Name specific weaknesses. No generic praise.
+9. Return valid JSON only.${contentOnlyNote}`;
 
       const metricsSummary = [
-        durationSec !== null ? `Duration: ${Math.round(durationSec)} seconds (${Math.round(durationSec / 60 * 10) / 10} min)` : null,
+        durationSec !== null ? `Duration: ${Math.round(durationSec)} seconds` : null,
         `Word count: ${transcriptWordCount} words`,
-        wpmLine,
-        pauseLine,
-        fillerLine,
+        wpmLine, pauseLine, fillerLine,
       ].filter(Boolean).join('\n');
 
       userPrompt = isArabic
-        ? `أنت مدرّب عروض تقديمية محترف وصارم. قيّم هذا العرض الفعلي حول موضوع: "${topic}"
-
-${speechMetricsBlock}
-مدة التسجيل: ${durationSec !== null ? `${Math.round(durationSec)} ثانية` : 'غير متاح'}
-عدد الكلمات: ${transcriptWordCount} كلمة
-${contentOnlyNote}
-النص الكامل للعرض:
-"${transcript}"
-
-تعليمات صارمة:
-1. اتبع مقياس التقييم بدقة — لا ترفع الدرجات.
-2. أقل من 30 كلمة: overall_score أقل من 30. أقل من 80 كلمة: أقل من 45. أقل من 150 كلمة: أقل من 60.
-3. موضوع غير ذي صلة: communication_effectiveness أقل من 30.
-4. نقاط القوة: اذكرها فقط إذا كانت مدعومة بوضوح من النص أو بيانات الكلام. إذا كان العرض ضعيفاً اكتب بالضبط: ["لم تتضح نقاط قوة واضحة من هذا العرض."]
-5. تقييم البنية: قيّم كل قسم (المقدمة، الجسم، الانتقالات، الخاتمة) كمدرب محترف — كن محدداً واستشهد بما قاله المتحدث فعلاً.
-6. score_reasons: اشرح بجملة أو جملتين لماذا أعطيت هذه الدرجة بالاستناد إلى النص.
-7. ai_feedback: 2-4 جمل من التغذية الراجعة الصادقة والمباشرة — سمّ نقاط الضعف تحديداً.
-
-أعد JSON فقط:
-{"overall_score":0,"confidence":0,"structure":0,"communication_effectiveness":0,"strengths":["نقطة قوة حقيقية مدعومة بالنص أو الجملة الثابتة"],"improvements":["تحسين محدد 1","تحسين محدد 2","تحسين محدد 3"],"score_reasons":{"confidence":"سبب الدرجة...","structure":"سبب الدرجة...","communication_effectiveness":"سبب الدرجة..."},"structure_review":{"opening":{"score":0,"feedback":"تقييم المقدمة...","suggestions":"اقتراحات..."},"body":{"score":0,"feedback":"تقييم الجسم...","suggestions":"اقتراحات..."},"transitions":{"score":0,"feedback":"تقييم الانتقالات...","suggestions":"اقتراحات..."},"conclusion":{"score":0,"feedback":"تقييم الخاتمة...","suggestions":"اقتراحات..."}},"ai_feedback":"تغذية راجعة مباشرة وصادقة تسمي نقاط الضعف تحديداً.","recommendations":[{"title":"توصية محددة 1","description":"نصيحة عملية 1"},{"title":"توصية محددة 2","description":"نصيحة عملية 2"},{"title":"توصية محددة 3","description":"نصيحة عملية 3"}]}`
-        : `You are a strict, professional presentation coach. Evaluate this ACTUAL recorded presentation on: "${topic}"
-
-${speechMetricsBlock}
-${metricsSummary}
-${contentOnlyNote}
-Full transcript (${transcriptWordCount} words):
-"${transcript}"
-
-STRICT EVALUATION RULES — follow exactly:
-1. Apply the scoring rubric. Do NOT inflate scores.
-2. Under 30 words → overall_score MUST be below 30. Under 80 words → below 45. Under 150 words → below 60.
-3. Off-topic → communication_effectiveness MUST be below 30.
-4. strengths: ONLY list if clearly supported by transcript or speech data. If weak, return exactly: ["No clear strengths could be identified from this presentation."]
-5. improvements: specific and actionable, tied to observed weaknesses.
-6. score_reasons: 1–2 honest sentences explaining WHY each score. Reference specific evidence.
-7. structure_review: evaluate each section like a professional coach. Be specific — reference what was actually said.
-8. ai_feedback: 2–4 direct coaching sentences. Name specific weaknesses. No generic praise.
-9. Return ONLY valid JSON:
-
-{"overall_score":0,"confidence":0,"structure":0,"communication_effectiveness":0,"strengths":["Genuine strength from transcript/data, or the fixed no-strengths message"],"improvements":["Specific improvement 1 tied to actual weakness","Specific improvement 2","Specific improvement 3"],"score_reasons":{"confidence":"Why this score — reference pace/fillers/pauses...","structure":"Why this score — reference intro/body/conclusion...","communication_effectiveness":"Why this score — reference clarity/relevance..."},"structure_review":{"opening":{"score":0,"feedback":"What was actually said in the opening and how effective it was.","suggestions":"One specific way to improve the opening."},"body":{"score":0,"feedback":"How the body was organized, what examples were used.","suggestions":"One specific improvement for the body."},"transitions":{"score":0,"feedback":"How smoothly ideas connected.","suggestions":"One specific improvement for transitions."},"conclusion":{"score":0,"feedback":"How the presentation ended.","suggestions":"One specific improvement for the conclusion."}},"ai_feedback":"Direct 2-4 sentence coaching feedback naming specific weaknesses.","recommendations":[{"title":"Specific rec 1","description":"Practical advice 1"},{"title":"Specific rec 2","description":"Practical advice 2"},{"title":"Specific rec 3","description":"Practical advice 3"}]}`;
+        ? `قيّم هذا العرض حول: "${topic}"\n\n${speechMetricsBlock}\nعدد الكلمات: ${transcriptWordCount}\n${contentOnlyNote}\nالنص: "${transcript}"\n\nأعد JSON فقط:\n{"overall_score":0,"confidence":0,"structure":0,"communication_effectiveness":0,"strengths":["نقطة قوة حقيقية"],"improvements":["تحسين 1","تحسين 2","تحسين 3"],"score_reasons":{"confidence":"سبب...","structure":"سبب...","communication_effectiveness":"سبب..."},"structure_review":{"opening":{"score":0,"feedback":"...","suggestions":"..."},"body":{"score":0,"feedback":"...","suggestions":"..."},"transitions":{"score":0,"feedback":"...","suggestions":"..."},"conclusion":{"score":0,"feedback":"...","suggestions":"..."}},"ai_feedback":"تغذية راجعة مباشرة.","recommendations":[{"title":"توصية 1","description":"نصيحة 1"},{"title":"توصية 2","description":"نصيحة 2"},{"title":"توصية 3","description":"نصيحة 3"}]}`
+        : `Evaluate this presentation on: "${topic}"\n\n${speechMetricsBlock}\n${metricsSummary}\n${contentOnlyNote}\nFull transcript (${transcriptWordCount} words):\n"${transcript}"\n\nReturn ONLY valid JSON:\n{"overall_score":0,"confidence":0,"structure":0,"communication_effectiveness":0,"strengths":["Genuine strength from transcript/data, or the fixed no-strengths message"],"improvements":["Specific improvement 1","Specific improvement 2","Specific improvement 3"],"score_reasons":{"confidence":"Why this score...","structure":"Why this score...","communication_effectiveness":"Why this score..."},"structure_review":{"opening":{"score":0,"feedback":"What was said and how effective.","suggestions":"One specific improvement."},"body":{"score":0,"feedback":"How organized, what examples.","suggestions":"One specific improvement."},"transitions":{"score":0,"feedback":"How smoothly ideas connected.","suggestions":"One specific improvement."},"conclusion":{"score":0,"feedback":"How the presentation ended.","suggestions":"One specific improvement."}},"ai_feedback":"Direct 2-4 sentence coaching naming specific weaknesses.","recommendations":[{"title":"Rec 1","description":"Advice 1"},{"title":"Rec 2","description":"Advice 2"},{"title":"Rec 3","description":"Advice 3"}]}`;
 
     } else {
       return new Response(
@@ -403,7 +395,7 @@ STRICT EVALUATION RULES — follow exactly:
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        temperature: 0.4,
+        temperature: 0.3,
         max_tokens: 8192,
       }),
       signal: AbortSignal.timeout(140000),
@@ -444,30 +436,7 @@ STRICT EVALUATION RULES — follow exactly:
       );
     }
 
-    // Enforce score ceilings programmatically for interview mode
-    if (mode === 'interview') {
-      const p = parsed as Record<string, unknown>;
-      const diag = p.per_question_diagnosis;
-      if (Array.isArray(diag) && diag.length > 0) {
-        let totalCeiling = 0;
-        for (const item of diag) {
-          const d = (item as Record<string, unknown>)?.diagnosis as Record<string, Record<string, string>> | undefined;
-          if (!d) { totalCeiling += 100; continue; }
-          let ceiling = 100;
-          if (d.relevance?.status === 'Off-topic') ceiling = Math.min(ceiling, 15);
-          if (d.accuracy?.status === 'Incorrect') ceiling = Math.min(ceiling, 30);
-          if (d.logic_coherence?.status === 'Contradictory') ceiling = Math.min(ceiling, 25);
-          if (d.completeness?.status === 'Missing') ceiling = Math.min(ceiling, 10);
-          if (d.completeness?.status === 'Incomplete' && d.completeness?.severity === 'high') ceiling = Math.min(ceiling, 45);
-          if (d.specificity?.status === 'Weak' && d.supporting_example?.status === 'Weak') ceiling = Math.min(ceiling, 55);
-          totalCeiling += ceiling;
-        }
-        const avgCeiling = Math.round(totalCeiling / diag.length);
-        if (typeof p.answer_quality === 'number') {
-          p.answer_quality = Math.min(p.answer_quality, avgCeiling);
-        }
-      }
-    }
+    enforceConsistency(parsed as Record<string, unknown>, mode);
 
     return new Response(
       JSON.stringify(parsed),

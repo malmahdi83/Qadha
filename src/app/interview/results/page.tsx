@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, RotateCcw, Loader2, AlertCircle, ChevronDown, Download } from 'lucide-react';
-import { useApp, InterviewResults, QuestionMetrics, type PerQuestionDiagnosis, type AnswerDiagnosis, type DiagnosisDimension } from '@/lib/context';
+import { useApp, InterviewResults, QuestionMetrics, type PerQuestionDiagnosis, type AnswerDiagnosis, type DiagnosisDimension, type StarSubDiagnosis, type AnswerClassificationIssue } from '@/lib/context';
 import { t } from '@/lib/i18n';
 import { analyzePerformance, saveSession, getSession, SpeechSummary } from '@/lib/ai';
 
@@ -155,6 +155,63 @@ const DIMENSION_ORDER = [
   'specificity', 'supporting_example', 'star_structure', 'communication_clarity',
 ] as const;
 
+const CLASSIFICATION_COLOR: Record<AnswerClassificationIssue, { bg: string; text: string; border: string; label: string; labelAr: string }> = {
+  strong:            { bg: 'rgba(16,185,129,.12)',   text: '#059669', border: 'rgba(16,185,129,.35)',  label: 'Strong',       labelAr: 'ممتازة' },
+  acceptable:        { bg: 'rgba(2,132,199,.12)',    text: '#0369a1', border: 'rgba(2,132,199,.35)',   label: 'Acceptable',   labelAr: 'مقبولة' },
+  incomplete:        { bg: 'rgba(217,119,6,.12)',    text: '#b45309', border: 'rgba(217,119,6,.35)',   label: 'Incomplete',   labelAr: 'ناقصة' },
+  vague:             { bg: 'rgba(217,119,6,.12)',    text: '#b45309', border: 'rgba(217,119,6,.35)',   label: 'Vague',        labelAr: 'مبهمة' },
+  off_topic:         { bg: 'rgba(220,38,38,.12)',    text: '#b91c1c', border: 'rgba(220,38,38,.35)',   label: 'Off-topic',    labelAr: 'خارج الموضوع' },
+  incorrect:         { bg: 'rgba(220,38,38,.12)',    text: '#b91c1c', border: 'rgba(220,38,38,.35)',   label: 'Incorrect',    labelAr: 'غير صحيحة' },
+  contradictory:     { bg: 'rgba(220,38,38,.12)',    text: '#b91c1c', border: 'rgba(220,38,38,.35)',   label: 'Contradictory',labelAr: 'متناقضة' },
+  nonsensical:       { bg: 'rgba(220,38,38,.12)',    text: '#b91c1c', border: 'rgba(220,38,38,.35)',   label: 'Nonsensical',  labelAr: 'غير مفهومة' },
+  no_answer:         { bg: 'rgba(220,38,38,.12)',    text: '#b91c1c', border: 'rgba(220,38,38,.35)',   label: 'No Answer',    labelAr: 'لا توجد إجابة' },
+  skipped:           { bg: 'rgba(107,114,128,.12)',  text: '#374151', border: 'rgba(107,114,128,.35)', label: 'Skipped',      labelAr: 'تم التخطي' },
+  unsupported_claim: { bg: 'rgba(217,119,6,.12)',    text: '#b45309', border: 'rgba(217,119,6,.35)',   label: 'Unsupported',  labelAr: 'غير مدعومة' },
+};
+
+const STAR_PART_COLOR: Record<string, { dot: string; label: string; labelAr: string }> = {
+  present:        { dot: '#10b981', label: 'Present',     labelAr: 'موجود' },
+  partial:        { dot: '#d97706', label: 'Partial',     labelAr: 'جزئي' },
+  missing:        { dot: '#dc2626', label: 'Missing',     labelAr: 'غائب' },
+  not_applicable: { dot: '#9ca3af', label: 'N/A',         labelAr: 'لا ينطبق' },
+};
+
+function StarSubDiagnosisPanel({ star, lang }: { star: StarSubDiagnosis; lang: string }) {
+  const isAr = lang === 'ar';
+  const parts: { key: keyof StarSubDiagnosis; labelEn: string; labelAr: string }[] = [
+    { key: 'situation', labelEn: 'Situation', labelAr: 'الموقف' },
+    { key: 'task',      labelEn: 'Task',      labelAr: 'المهمة' },
+    { key: 'action',    labelEn: 'Action',    labelAr: 'الإجراء' },
+    { key: 'result',    labelEn: 'Result',    labelAr: 'النتيجة' },
+  ];
+  const allNA = parts.every(p => star[p.key] === 'not_applicable');
+  if (allNA) return null;
+
+  return (
+    <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 16px' }}>
+      <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--fg3)', marginBottom: 12 }}>
+        {isAr ? 'تفاصيل منهج STAR' : 'STAR Breakdown'}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8 }}>
+        {parts.map(p => {
+          const val = star[p.key];
+          const col = STAR_PART_COLOR[val] ?? STAR_PART_COLOR.not_applicable;
+          return (
+            <div key={p.key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, padding: '8px 4px', background: 'var(--surface)', borderRadius: 9, border: '1px solid var(--border)' }}>
+              <span style={{ fontWeight: 800, fontSize: 14, color: 'var(--accent)' }}>{p.labelEn[0]}</span>
+              <span style={{ fontSize: 11, color: 'var(--fg3)', fontWeight: 600 }}>{isAr ? p.labelAr : p.labelEn}</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 700, color: col.dot }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: col.dot, flexShrink: 0, display: 'inline-block' }} />
+                {isAr ? col.labelAr : col.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function DiagnosisPanel({ diagnosis, lang }: { diagnosis: AnswerDiagnosis; lang: string }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const isAr = lang === 'ar';
@@ -241,10 +298,18 @@ function DiagnosisPanel({ diagnosis, lang }: { diagnosis: AnswerDiagnosis; lang:
 }
 
 function AccordionCard({
-  index, question, userAnswer, idealAnswer, lang, contentOnly, diagnosis,
-}: { index: number; question: string; userAnswer: string; idealAnswer: string; lang: string; contentOnly?: boolean; diagnosis?: AnswerDiagnosis }) {
+  index, question, userAnswer, idealAnswer, lang, contentOnly, diagnosisItem,
+}: { index: number; question: string; userAnswer: string; idealAnswer: string; lang: string; contentOnly?: boolean; diagnosisItem?: PerQuestionDiagnosis }) {
   const [open, setOpen] = useState(false);
   const isAr = lang === 'ar';
+
+  const classification = diagnosisItem?.answer_classification;
+  const classStyle = classification ? CLASSIFICATION_COLOR[classification.primary_issue] : null;
+  // Only show badge for non-trivial issues
+  const showBadge = classStyle && classification?.primary_issue !== 'acceptable' && classification?.primary_issue !== 'strong';
+
+  const showAnswer = idealAnswer || diagnosisItem?.improved_answer;
+
   return (
     <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 18, overflow: 'hidden', boxShadow: 'var(--shadow)' }}>
       <button
@@ -253,6 +318,11 @@ function AccordionCard({
         style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 14, padding: '18px 22px', background: 'none', border: 'none', cursor: 'pointer', textAlign: isAr ? 'right' : 'left', fontFamily: 'inherit' }}>
         <div style={{ width: 32, height: 32, borderRadius: 9, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 14, flexShrink: 0 }}>{index + 1}</div>
         <span style={{ flex: 1, fontWeight: 600, fontSize: 15, color: 'var(--fg)', lineHeight: 1.4 }}>{question}</span>
+        {showBadge && (
+          <span style={{ fontSize: 11, fontWeight: 700, background: classStyle.bg, color: classStyle.text, border: `1px solid ${classStyle.border}`, padding: '2px 9px', borderRadius: 12, flexShrink: 0, whiteSpace: 'nowrap' }}>
+            {isAr ? classStyle.labelAr : classStyle.label}
+          </span>
+        )}
         {contentOnly && (
           <span style={{ fontSize: 11, fontWeight: 700, background: 'rgba(245,158,11,.15)', color: '#d97706', border: '1px solid rgba(245,158,11,.3)', padding: '2px 8px', borderRadius: 12, flexShrink: 0, whiteSpace: 'nowrap' }}>
             {isAr ? 'محتوى فقط' : 'Content Only'}
@@ -262,37 +332,74 @@ function AccordionCard({
       </button>
 
       <div className="accordion-body" style={{ padding: '0 22px 20px', display: open ? 'flex' : 'none', flexDirection: 'column', gap: 14 }}>
-          {contentOnly && (
-            <div style={{ background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.3)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#92400e', lineHeight: 1.55 }}>
-              {isAr
-                ? 'تم تقييم محتوى هذه الإجابة فقط لأن لغة الإجابة لم تتطابق مع لغة المقابلة المحددة. درجات اللغة والتواصل لم تُحتسب لهذه الإجابة. النص الأصلي محفوظ دون ترجمة.'
-                : 'This answer was evaluated for content only because the spoken language did not match the selected interview language. Language and communication scores were not applied to this answer. The original transcript is preserved without translation.'}
-            </div>
-          )}
-          <div style={{ background: 'rgba(2,132,199,.07)', border: '1.5px solid rgba(2,132,199,.2)', borderRadius: 12, padding: '14px 16px' }}>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' }} />
-              {isAr ? 'إجابتك' : 'Your Answer'}
-            </div>
-            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.65, color: 'var(--fg)', whiteSpace: 'pre-wrap' }}>
-              {userAnswer || (isAr ? '(لم تُقدَّم إجابة)' : '(no answer given)')}
-            </p>
+        {contentOnly && (
+          <div style={{ background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.3)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#92400e', lineHeight: 1.55 }}>
+            {isAr
+              ? 'تم تقييم محتوى هذه الإجابة فقط لأن لغة الإجابة لم تتطابق مع لغة المقابلة المحددة. درجات اللغة والتواصل لم تُحتسب لهذه الإجابة. النص الأصلي محفوظ دون ترجمة.'
+              : 'This answer was evaluated for content only because the spoken language did not match the selected interview language. Language and communication scores were not applied to this answer. The original transcript is preserved without translation.'}
           </div>
+        )}
 
-          {diagnosis && (
-            <DiagnosisPanel diagnosis={diagnosis} lang={lang} />
-          )}
+        {/* Your Answer */}
+        <div style={{ background: 'rgba(2,132,199,.07)', border: '1.5px solid rgba(2,132,199,.2)', borderRadius: 12, padding: '14px 16px' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' }} />
+            {isAr ? 'إجابتك' : 'Your Answer'}
+          </div>
+          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.65, color: 'var(--fg)', whiteSpace: 'pre-wrap' }}>
+            {userAnswer || (isAr ? '(لم تُقدَّم إجابة)' : '(no answer given)')}
+          </p>
+        </div>
 
+        {/* Answer Diagnosis */}
+        {diagnosisItem?.diagnosis && (
+          <DiagnosisPanel diagnosis={diagnosisItem.diagnosis} lang={lang} />
+        )}
+
+        {/* STAR Sub-diagnosis */}
+        {diagnosisItem?.star_sub_diagnosis && (
+          <StarSubDiagnosisPanel star={diagnosisItem.star_sub_diagnosis} lang={lang} />
+        )}
+
+        {/* Coaching Section */}
+        {(diagnosisItem?.what_interviewer_expected || diagnosisItem?.coach_feedback) && (
+          <div style={{ background: 'rgba(245,158,11,.06)', border: '1px solid rgba(245,158,11,.25)', borderRadius: 12, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: '#b45309', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#d97706' }} />
+              {isAr ? 'إرشادات المحاور' : 'Interview Coach'}
+            </div>
+            {diagnosisItem.what_interviewer_expected && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--fg3)', marginBottom: 4 }}>
+                  {isAr ? 'ما الذي كان المحاور يتوقعه؟' : 'What the interviewer expected'}
+                </div>
+                <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: 'var(--fg2)' }}>{diagnosisItem.what_interviewer_expected}</p>
+              </div>
+            )}
+            {diagnosisItem.coach_feedback && (
+              <div style={{ borderTop: diagnosisItem.what_interviewer_expected ? '1px solid rgba(245,158,11,.2)' : 'none', paddingTop: diagnosisItem.what_interviewer_expected ? 10 : 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--fg3)', marginBottom: 4 }}>
+                  {isAr ? 'نصيحة التحسين' : 'Coaching tip'}
+                </div>
+                <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: 'var(--fg)' }}>{diagnosisItem.coach_feedback}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Improved / Ideal Answer */}
+        {showAnswer && (
           <div style={{ background: 'rgba(16,185,129,.07)', border: '1.5px solid rgba(16,185,129,.25)', borderRadius: 12, padding: '14px 16px' }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: '#10b981', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#10b981' }} />
-              {isAr ? 'الإجابة المثالية' : 'Ideal Answer'}
+              {isAr ? 'مثال على إجابة قوية' : 'Strong Answer Example'}
             </div>
             <p style={{ margin: 0, fontSize: 14, lineHeight: 1.65, color: 'var(--fg)', whiteSpace: 'pre-wrap' }}>
-              {idealAnswer || (isAr ? 'جارٍ التوليد…' : 'Generating…')}
+              {diagnosisItem?.improved_answer || idealAnswer}
             </p>
           </div>
-        </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -706,9 +813,9 @@ export default function InterviewResultsPage() {
                 }
                 lang={lang}
                 contentOnly={contentOnlyAnswers[i]}
-                diagnosis={
-                  r2.per_question_diagnosis?.find(d => d.question === q)?.diagnosis
-                  ?? r2.per_question_diagnosis?.[i]?.diagnosis
+                diagnosisItem={
+                  r2.per_question_diagnosis?.find(d => d.question === q)
+                  ?? r2.per_question_diagnosis?.[i]
                 }
               />
             ))}
