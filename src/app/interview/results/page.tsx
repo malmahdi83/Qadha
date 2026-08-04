@@ -176,6 +176,74 @@ const STAR_PART_COLOR: Record<string, { dot: string; label: string; labelAr: str
   not_applicable: { dot: '#9ca3af', label: 'N/A',         labelAr: 'لا ينطبق' },
 };
 
+// Severity rank — higher = worse — used to pick the most problematic instance per dimension
+const STATUS_RANK: Record<string, number> = {
+  'Excellent': 0, 'Good': 1, 'Acceptable': 2, 'Not Applicable': 2,
+  'Needs Improvement': 3, 'Incomplete': 3, 'Unclear': 3,
+  'Weak': 4, 'Missing': 5,
+  'Off-topic': 6, 'Incorrect': 6, 'Contradictory': 6,
+};
+const STAR_RANK: Record<string, number> = {
+  not_applicable: 0, present: 1, partial: 2, missing: 3,
+};
+
+interface DimSummary {
+  status: string; severity: string;
+  reason: string; evidence: string; how_to_improve: string;
+  questionIndex: number;
+}
+
+interface StarAgg {
+  applicable: boolean;
+  situation: string; task: string; action: string; result: string;
+  reason: string;
+}
+
+function buildAggDiag(items: PerQuestionDiagnosis[]): Record<string, DimSummary | null> {
+  const result: Record<string, DimSummary | null> = {};
+  for (const k of DIMENSION_ORDER) {
+    if (k === 'star_structure') continue;
+    let worst: DimSummary | null = null;
+    let worstRank = -1;
+    items.forEach((item, qi) => {
+      const dim = item.diagnosis?.[k as keyof AnswerDiagnosis];
+      if (!dim) return;
+      const rank = STATUS_RANK[dim.status] ?? 3;
+      if (rank > worstRank) {
+        worstRank = rank;
+        worst = { status: dim.status, severity: dim.severity ?? 'none', reason: dim.reason ?? '', evidence: dim.evidence ?? '', how_to_improve: dim.how_to_improve ?? '', questionIndex: qi };
+      }
+    });
+    result[k] = worst;
+  }
+  return result;
+}
+
+function buildStarAgg(items: PerQuestionDiagnosis[]): StarAgg {
+  const anyApplicable = items.some(item => {
+    const s = item.diagnosis?.star_structure;
+    return s && s.status !== 'Not Applicable';
+  });
+  if (!anyApplicable) {
+    const reason = items.find(i => i.diagnosis?.star_structure?.reason)?.diagnosis?.star_structure?.reason ?? '';
+    return { applicable: false, situation: 'not_applicable', task: 'not_applicable', action: 'not_applicable', result: 'not_applicable', reason };
+  }
+  const parts = ['situation', 'task', 'action', 'result'] as const;
+  const worst: Record<string, string> = {};
+  for (const p of parts) {
+    let wr = -1; let wv = 'not_applicable';
+    for (const item of items) {
+      const sub = item.star_sub_diagnosis;
+      if (!sub) continue;
+      const val = sub[p] ?? 'not_applicable';
+      const rank = STAR_RANK[val] ?? 0;
+      if (rank > wr) { wr = rank; wv = val; }
+    }
+    worst[p] = wv;
+  }
+  return { applicable: true, situation: worst.situation, task: worst.task, action: worst.action, result: worst.result, reason: '' };
+}
+
 function StarSubDiagnosisPanel({ star, lang }: { star: StarSubDiagnosis; lang: string }) {
   const isAr = lang === 'ar';
   const parts: { key: keyof StarSubDiagnosis; labelEn: string; labelAr: string }[] = [
@@ -292,6 +360,157 @@ function DiagnosisPanel({ diagnosis, lang }: { diagnosis: AnswerDiagnosis; lang:
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function AnswerDiagnosisSection({ items, lang }: { items: PerQuestionDiagnosis[]; lang: string }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const isAr = lang === 'ar';
+  const labels = isAr ? DIMENSION_LABELS_AR : DIMENSION_LABELS_EN;
+  const aggDiag = buildAggDiag(items);
+  const starAgg = buildStarAgg(items);
+  if (items.length === 0) return null;
+
+  const critCount = DIMENSION_ORDER.filter(k => {
+    if (k === 'star_structure') return false;
+    const d = aggDiag[k];
+    return d && (d.severity === 'critical' || d.severity === 'high');
+  }).length;
+
+  const nonStarDims = DIMENSION_ORDER.filter(k => k !== 'star_structure') as string[];
+  const starKey = 'star_structure';
+
+  const STAR_PARTS = [
+    { key: 'situation' as const, en: 'Situation', ar: 'الموقف' },
+    { key: 'task'      as const, en: 'Task',      ar: 'المهمة' },
+    { key: 'action'    as const, en: 'Action',    ar: 'الإجراء' },
+    { key: 'result'    as const, en: 'Result',    ar: 'النتيجة' },
+  ];
+
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, boxShadow: 'var(--shadow)', marginBottom: 20, overflow: 'hidden' }}>
+      {/* Header */}
+      <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 180 }}>
+          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>{isAr ? 'تشخيص الإجابات' : 'Answer Diagnosis'}</h2>
+          <p style={{ margin: '3px 0 0', fontSize: 13, color: 'var(--fg3)' }}>
+            {isAr
+              ? 'تحليل مفصّل لكل بُعد — انقر لعرض الشرح والدليل وطريقة التحسين'
+              : 'Click any dimension to see explanation, evidence, and how to improve'}
+          </p>
+        </div>
+        {critCount > 0 && (
+          <span style={{ fontSize: 11, fontWeight: 700, background: 'rgba(220,38,38,.1)', color: '#dc2626', border: '1px solid rgba(220,38,38,.25)', borderRadius: 20, padding: '4px 12px', whiteSpace: 'nowrap' }}>
+            {critCount} {isAr ? 'بُعد يحتاج اهتماماً' : critCount === 1 ? 'dimension needs attention' : 'dimensions need attention'}
+          </span>
+        )}
+      </div>
+
+      {/* Non-STAR dimension rows */}
+      {nonStarDims.map((key, idx) => {
+        const summary = aggDiag[key] ?? null;
+        const isOpen = expanded === key;
+        const statusColor = summary ? (STATUS_COLOR[summary.status] ?? '#6b7280') : '#9ca3af';
+        const sevColor = summary ? (SEVERITY_COLOR[summary.severity] ?? '#6b7280') : '#9ca3af';
+        const isNa = summary?.status === 'Not Applicable';
+        const hasDetails = !!summary && !isNa && !!(summary.reason || summary.evidence || summary.how_to_improve);
+
+        return (
+          <div key={key} style={{ borderTop: idx === 0 ? 'none' : '1px solid var(--border)' }}>
+            <button
+              onClick={() => hasDetails ? setExpanded(isOpen ? null : key) : undefined}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '13px 20px', background: 'none', border: 'none', cursor: hasDetails ? 'pointer' : 'default', fontFamily: 'inherit', textAlign: isAr ? 'right' : 'left' }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: summary && !isNa ? sevColor : '#9ca3af', flexShrink: 0 }} />
+              <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: isNa || !summary ? 'var(--fg3)' : 'var(--fg)' }}>{labels[key]}</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: statusColor, background: `${statusColor}18`, border: `1px solid ${statusColor}35`, borderRadius: 10, padding: '2px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                {summary ? summary.status : (isAr ? 'غير متاح' : 'Not Available')}
+              </span>
+              {summary && !isNa && summary.severity && summary.severity !== 'none' && (
+                <span style={{ fontSize: 10, fontWeight: 700, color: sevColor, background: `${sevColor}18`, borderRadius: 8, padding: '2px 7px', whiteSpace: 'nowrap', flexShrink: 0, textTransform: 'uppercase' as const }}>
+                  {summary.severity}
+                </span>
+              )}
+              {hasDetails && (
+                <ChevronDown size={14} style={{ color: 'var(--fg3)', transition: 'transform .15s', transform: isOpen ? 'rotate(180deg)' : 'none', flexShrink: 0 }} />
+              )}
+            </button>
+            {isOpen && hasDetails && summary && (
+              <div style={{ padding: '2px 20px 16px 36px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {summary.reason && (
+                  <p style={{ margin: 0, fontSize: 13.5, color: 'var(--fg2)', lineHeight: 1.6 }}>{summary.reason}</p>
+                )}
+                {summary.evidence && (
+                  <div style={{ background: 'var(--surface2)', borderRadius: 9, padding: '9px 13px', borderLeft: `3px solid ${statusColor}` }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--fg3)', textTransform: 'uppercase' as const, letterSpacing: '.06em', display: 'block', marginBottom: 4 }}>
+                      {isAr ? 'من إجابتك' : 'Evidence'}
+                    </span>
+                    <span style={{ fontSize: 13, color: 'var(--fg)', fontStyle: 'italic' }}>"{summary.evidence}"</span>
+                  </div>
+                )}
+                {summary.how_to_improve && (
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                    <span style={{ color: '#10b981', flexShrink: 0, fontWeight: 800, fontSize: 14 }}>→</span>
+                    <p style={{ margin: 0, fontSize: 13.5, color: 'var(--fg2)', lineHeight: 1.6 }}>{summary.how_to_improve}</p>
+                  </div>
+                )}
+                <span style={{ fontSize: 11, color: 'var(--fg3)', fontStyle: 'italic' }}>
+                  {isAr ? `من السؤال ${summary.questionIndex + 1}` : `From Question ${summary.questionIndex + 1}`}
+                </span>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* STAR row */}
+      <div style={{ borderTop: '1px solid var(--border)' }}>
+        {starAgg.applicable ? (
+          <>
+            <button
+              onClick={() => setExpanded(expanded === starKey ? null : starKey)}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '13px 20px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: isAr ? 'right' : 'left' }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#8b5cf6', flexShrink: 0 }} />
+              <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{isAr ? 'منهج STAR' : 'STAR Structure'}</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6', background: 'rgba(139,92,246,.12)', border: '1px solid rgba(139,92,246,.3)', borderRadius: 10, padding: '2px 10px', flexShrink: 0 }}>
+                S · T · A · R
+              </span>
+              <ChevronDown size={14} style={{ color: 'var(--fg3)', transition: 'transform .15s', transform: expanded === starKey ? 'rotate(180deg)' : 'none', flexShrink: 0 }} />
+            </button>
+            {expanded === starKey && (
+              <div style={{ padding: '4px 20px 16px 36px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8 }}>
+                  {STAR_PARTS.map(({ key: pk, en, ar }) => {
+                    const val = starAgg[pk];
+                    const col = STAR_PART_COLOR[val] ?? STAR_PART_COLOR.not_applicable;
+                    return (
+                      <div key={pk} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, padding: '10px 4px', background: 'var(--surface2)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                        <span style={{ fontWeight: 800, fontSize: 16, color: '#8b5cf6' }}>{en[0]}</span>
+                        <span style={{ fontSize: 11, color: 'var(--fg3)', fontWeight: 600 }}>{isAr ? ar : en}</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, fontWeight: 700, color: col.dot }}>
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: col.dot, display: 'inline-block' }} />
+                          {isAr ? col.labelAr : col.label}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <div style={{ padding: '13px 20px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#9ca3af', flexShrink: 0 }} />
+            <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: 'var(--fg3)', minWidth: 120 }}>{isAr ? 'منهج STAR' : 'STAR Structure'}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#9ca3af', background: 'rgba(156,163,175,.12)', border: '1px solid rgba(156,163,175,.3)', borderRadius: 10, padding: '2px 10px', flexShrink: 0 }}>
+              {isAr ? 'لا ينطبق' : 'Not Applicable'}
+            </span>
+            {starAgg.reason && (
+              <span style={{ fontSize: 12, color: 'var(--fg3)', width: '100%', paddingLeft: 18 }}>{starAgg.reason}</span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -714,6 +933,10 @@ export default function InterviewResultsPage() {
           </div>
         )}
       </div>
+
+      {r2.per_question_diagnosis && r2.per_question_diagnosis.length > 0 && (
+        <AnswerDiagnosisSection items={r2.per_question_diagnosis} lang={lang} />
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 20, marginBottom: 20 }}>
         {r2.strengths?.length > 0 && (() => {
