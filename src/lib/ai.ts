@@ -166,7 +166,9 @@ export interface SessionRow {
 
 export async function saveSession(row: SessionRow): Promise<string | null> {
   const supabase = createClient();
-  const { data, error } = await supabase.from('sessions').insert(row).select('id').single();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) { console.error('saveSession: no authenticated user'); return null; }
+  const { data, error } = await supabase.from('sessions').insert({ ...row, user_id: user.id }).select('id').single();
   if (error) { console.error('saveSession error:', error); return null; }
   return data?.id ?? null;
 }
