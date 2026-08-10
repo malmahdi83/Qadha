@@ -38,6 +38,8 @@ export default function PresentationRecordingPage() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const mountedRef = useRef(true);
+  const recordingLockRef = useRef(false);
 
   const enableCam = useCallback(async () => {
     try {
@@ -64,8 +66,10 @@ export default function PresentationRecordingPage() {
   }, [router]);
 
   useEffect(() => {
+    mountedRef.current = true;
     enableCam();
     return () => {
+      mountedRef.current = false;
       stopCam();
       if (timerRef.current) clearInterval(timerRef.current);
       if (recorderRef.current && recorderRef.current.state !== 'inactive') recorderRef.current.stop();
@@ -73,6 +77,8 @@ export default function PresentationRecordingPage() {
   }, [enableCam, stopCam]);
 
   const startRecording = async () => {
+    if (recordingLockRef.current) return;
+    recordingLockRef.current = true;
     setError('');
     setDone(false);
     setTranscript('');
@@ -85,9 +91,11 @@ export default function PresentationRecordingPage() {
     let audioStream: MediaStream;
     try {
       audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!mountedRef.current) { audioStream.getTracks().forEach(t => t.stop()); recordingLockRef.current = false; return; }
       audioStreamRef.current?.getTracks().forEach(t => t.stop());
       audioStreamRef.current = audioStream;
     } catch {
+      recordingLockRef.current = false;
       setError(lang === 'ar' ? 'تعذّر الوصول إلى الميكروفون.' : 'Microphone access denied.');
       return;
     }
@@ -100,6 +108,7 @@ export default function PresentationRecordingPage() {
 
     const recordingStart = Date.now(); // capture start time here, not from a ref set later
     recorder.onstop = async () => {
+      if (!mountedRef.current) { recordingLockRef.current = false; return; }
       const durationSeconds = Math.max(0, (Date.now() - recordingStart) / 1000);
       const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
       setTranscribing(true);
@@ -107,11 +116,12 @@ export default function PresentationRecordingPage() {
       try {
         freshToken = await getAuthToken();
       } catch (err) {
-        if (err instanceof AuthSessionExpiredError) { router.replace('/auth/login'); return; }
+        if (err instanceof AuthSessionExpiredError) { recordingLockRef.current = false; router.replace('/auth/login'); return; }
         setError(lang === 'ar' ? 'خطأ في المصادقة. يُرجى تسجيل الدخول مجددًا.' : 'Authentication error. Please sign in again.');
         setTranscribing(false);
         audioStreamRef.current?.getTracks().forEach(t => t.stop());
         audioStreamRef.current = null;
+        recordingLockRef.current = false;
         return;
       }
       try {
@@ -122,11 +132,13 @@ export default function PresentationRecordingPage() {
         // Two-source language detection (same as interview)
         const textLang = detectLanguage(trimmed);
         const expectedLang: 'ar' | 'en' | 'mixed' | 'unknown' = intLang === 'ar' ? 'ar' : 'en';
-        let spokenLang: 'ar' | 'en' | 'mixed' | 'unknown';
+        let spokenLang: 'ar' | 'en' | 'mixed' | 'other' | 'unknown';
         if (textLang === 'mixed') {
           spokenLang = 'mixed';
-        } else if (groqLang !== 'unknown') {
+        } else if (groqLang === 'ar' || groqLang === 'en') {
           spokenLang = groqLang;
+        } else if (groqLang === 'other') {
+          spokenLang = expectedLang === 'ar' ? 'en' : 'ar';
         } else {
           spokenLang = textLang;
         }
@@ -181,6 +193,7 @@ export default function PresentationRecordingPage() {
         setTranscribing(false);
         audioStreamRef.current?.getTracks().forEach(t => t.stop());
         audioStreamRef.current = null;
+        recordingLockRef.current = false;
       }
     };
 

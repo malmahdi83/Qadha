@@ -14,6 +14,10 @@ const ALLOWED_ORIGINS = [
 // Rate limit: 20 transcriptions per user per 10 minutes
 const RATE_LIMIT = 20;
 const RATE_WINDOW_MS = 10 * 60 * 1000;
+// NOTE: This in-memory rate limit resets on every cold start and is not shared
+// across isolate instances. It provides a best-effort guard against accidental
+// overuse but can be bypassed. For production enforcement, replace with a
+// persistent store (e.g. Supabase KV, Redis, or a DB counter).
 const rateCounts = new Map<string, { count: number; resetAt: number }>();
 
 function checkRateLimit(key: string): boolean {
@@ -91,6 +95,14 @@ Deno.serve(async (req: Request) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
+  const origin = req.headers.get('origin') ?? '';
+  if (req.method !== 'OPTIONS' && origin && !ALLOWED_ORIGINS.includes(origin)) {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), {
+      status: 403,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   try {
     const userId = await extractUserId(req);
     if (!userId) {
@@ -103,7 +115,7 @@ Deno.serve(async (req: Request) => {
     if (!checkRateLimit(userId)) {
       return new Response(
         JSON.stringify({ error: 'Too many requests. Please wait before transcribing again.' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': '60' } }
+        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': '600' } }
       );
     }
 
@@ -128,12 +140,23 @@ Deno.serve(async (req: Request) => {
 
     const ALLOWED_MIME = ['audio/webm', 'audio/ogg', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/flac', 'audio/x-m4a'];
     const mimeBase = (audio.type || '').split(';')[0].trim().toLowerCase();
-    if (mimeBase && !ALLOWED_MIME.some(m => mimeBase.startsWith(m.split('/')[0]) && mimeBase.includes('audio'))) {
+    if (mimeBase && !ALLOWED_MIME.includes(mimeBase)) {
       return new Response(
         JSON.stringify({ error: 'Invalid file type. Only audio files are accepted.' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    const EXT_MAP: Record<string, string> = {
+      'audio/webm': 'webm',
+      'audio/ogg': 'ogg',
+      'audio/mp4': 'm4a',
+      'audio/mpeg': 'mp3',
+      'audio/wav': 'wav',
+      'audio/flac': 'flac',
+      'audio/x-m4a': 'm4a',
+    };
+    const ext = EXT_MAP[mimeBase] ?? 'webm';
 
     const MAX_BYTES = 25 * 1024 * 1024;
     if (audio.size > MAX_BYTES) {
@@ -144,7 +167,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const outForm = new FormData();
-    outForm.append('file', audio, audio.name || 'recording.webm');
+    outForm.append('file', audio, audio.name || `recording.${ext}`);
     outForm.append('model', 'whisper-large-v3');
     // Do NOT append 'language' — Whisper auto-detects the spoken language.
     // Forcing it to the interview language causes Whisper to translate instead of transcribe.
@@ -173,10 +196,10 @@ Deno.serve(async (req: Request) => {
     // Groq verbose_json includes a top-level 'language' field with the ISO 639-1 code
     // that Whisper auto-detected from the audio (e.g. 'ar', 'en', 'fr').
     const groqLang = typeof data.language === 'string' ? data.language.toLowerCase().trim() : '';
-    let detectedLanguage: 'ar' | 'en' | 'mixed' | 'unknown';
+    let detectedLanguage: 'ar' | 'en' | 'other' | 'unknown';
     if (groqLang === 'ar' || groqLang === 'arabic') detectedLanguage = 'ar';
     else if (groqLang === 'en' || groqLang === 'english') detectedLanguage = 'en';
-    else if (groqLang) detectedLanguage = 'unknown'; // other language (not ar or en)
+    else if (groqLang) detectedLanguage = 'other'; // recognized non-ar/en language (e.g. 'fr', 'de', 'tr')
     else detectedLanguage = 'unknown';
 
     const { pauseCount, avgPauseDuration, longestPauseDuration } = computePauseMetrics(segments);

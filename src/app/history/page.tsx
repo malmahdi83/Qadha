@@ -83,6 +83,12 @@ export default function HistoryPage() {
             </div>
           );
         })}
+
+        {!loading && sessions.length === 50 && (
+          <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--fg3)', margin: '8px 0 0' }}>
+            {lang === 'ar' ? 'يتم عرض آخر 50 جلسة فقط.' : 'Showing your 50 most recent sessions.'}
+          </p>
+        )}
       </div>
     </section>
   );

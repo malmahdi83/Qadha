@@ -64,6 +64,7 @@ export default function PresentationResultsPage() {
   const savedRef = useRef(false);
   const [loading, setLoading] = useState(!presResults);
   const [error, setError] = useState('');
+  const [saveError, setSaveError] = useState(false);
 
   const isAr = lang === 'ar';
 
@@ -109,6 +110,10 @@ export default function PresentationResultsPage() {
       if (params.get('session')) return; // DB-load effect is responsible
     }
     if (presResults || calledRef.current) { setLoading(false); return; }
+    if (!presTranscript) {
+      router.replace('/presentation/setup');
+      return;
+    }
     calledRef.current = true;
 
     analyzePerformance<PresentationResults>({
@@ -169,7 +174,9 @@ export default function PresentationResultsPage() {
       ideal_answers: presResults.structure_review,
       questions: presResults.score_reasons,
       answers: presSpeechMetrics ?? undefined,
-    }).catch(console.error);
+    })
+      .then(id => { if (id === null) setSaveError(true); })
+      .catch(() => setSaveError(true));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [presResults]);
 
@@ -211,6 +218,14 @@ export default function PresentationResultsPage() {
 
   return (
     <section style={{ maxWidth: 1100, margin: '0 auto', padding: 'clamp(20px,3.5vw,44px) clamp(16px,4vw,40px)' }}>
+      {saveError && (
+        <div style={{ marginBottom: 16, background: 'rgba(245,158,11,.1)', border: '1px solid rgba(245,158,11,.4)', borderRadius: 12, padding: '12px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 14, color: '#92400e' }}>
+            {isAr ? '⚠️ تعذّر حفظ الجلسة. لن تظهر في السجل.' : '⚠️ Could not save this session. It will not appear in your history.'}
+          </span>
+          <button onClick={() => setSaveError(false)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 18, color: '#92400e', padding: 0, lineHeight: 1 }}>×</button>
+        </div>
+      )}
       {/* Hero */}
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 24, padding: 'clamp(24px,4vw,48px)', boxShadow: 'var(--shadow)', marginBottom: 24, display: 'flex', gap: 40, alignItems: 'center', flexWrap: 'wrap' }}>
         <ScoreGauge score={p.overall_score} />

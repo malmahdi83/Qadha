@@ -1,5 +1,5 @@
 'use client';
-import { useRef, useState, useEffect } from 'react';
+import { useCallback, useRef, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Presentation, ArrowRight, Upload, Check, Loader } from 'lucide-react';
 import { useApp } from '@/lib/context';
@@ -15,12 +15,34 @@ export default function PresentationSetupPage() {
   const router = useRouter();
   const dir = lang === 'ar' ? 'rtl' : 'ltr';
   const fileRef = useRef<HTMLInputElement>(null);
+  const uploadedPathRef = useRef<string | null>(null);
 
   useEffect(() => { resetPresentation(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cleanup uploaded file on unmount
+  useEffect(() => {
+    return () => {
+      const path = uploadedPathRef.current;
+      if (path) {
+        createClient().storage.from('documents').remove([path]).catch(() => {/* ignore cleanup errors */});
+      }
+    };
+  }, []);
+
+  // Reset presentation state on bfcache restore
+  const handlePageShow = useCallback((e: PageTransitionEvent) => {
+    if (e.persisted) resetPresentation();
+  }, [resetPresentation]);
+
+  useEffect(() => {
+    window.addEventListener('pageshow', handlePageShow);
+    return () => window.removeEventListener('pageshow', handlePageShow);
+  }, [handlePageShow]);
 
   const [uploaded, setUploaded] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
+  const [topicError, setTopicError] = useState('');
 
   const handleFile = async (file: File) => {
     setUploadError('');
@@ -41,6 +63,7 @@ export default function PresentationSetupPage() {
     if (error) {
       setUploadError(error.message);
     } else {
+      uploadedPathRef.current = path;
       setUploaded(file.name);
     }
   };
@@ -72,11 +95,14 @@ export default function PresentationSetupPage() {
         {/* Topic */}
         <div>
           <label style={{ display: 'block', fontWeight: 700, fontSize: 14.5, marginBottom: 10 }}>{tr.pres.topicL}</label>
-          <input type="text" value={topic} onChange={e => setTopic(e.target.value)}
+          <input type="text" value={topic} onChange={e => { setTopic(e.target.value); if (topicError) setTopicError(''); }}
             placeholder={tr.pres.topicPh}
             style={{ width: '100%', border: '1.5px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'inherit', fontSize: 15, padding: '13px 16px', borderRadius: 12, outline: 'none', boxSizing: 'border-box', transition: 'border-color .15s' }}
             onFocus={e => (e.target as HTMLInputElement).style.borderColor = '#8b5cf6'}
             onBlur={e => (e.target as HTMLInputElement).style.borderColor = ''} />
+          {topicError && (
+            <p style={{ margin: '6px 0 0', fontSize: 13, color: '#ef4444' }}>{topicError}</p>
+          )}
         </div>
 
         {/* Upload */}
@@ -107,9 +133,20 @@ export default function PresentationSetupPage() {
         </div>
       </div>
 
-      <button onClick={() => router.push('/presentation/recording')}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, width: '100%', border: 'none', background: '#8b5cf6', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 16.5, padding: 17, borderRadius: 14, cursor: 'pointer', marginTop: 24, boxShadow: '0 12px 26px rgba(139,92,246,.3)', transition: 'transform .15s' }}
-        onMouseEnter={e => (e.currentTarget as HTMLElement).style.transform = 'translateY(-2px)'}
+      <button
+        onClick={() => {
+          if (uploading) return;
+          if (!topic.trim()) {
+            setTopicError(lang === 'ar' ? 'يُرجى إدخال موضوع العرض أولاً.' : 'Please enter a presentation topic first.');
+            return;
+          }
+          setTopicError('');
+          uploadedPathRef.current = null; // don't cleanup on unmount — recording page takes over
+          router.push('/presentation/recording');
+        }}
+        disabled={uploading}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, width: '100%', border: 'none', background: '#8b5cf6', color: '#fff', fontFamily: 'inherit', fontWeight: 700, fontSize: 16.5, padding: 17, borderRadius: 14, cursor: uploading ? 'not-allowed' : 'pointer', marginTop: 24, boxShadow: '0 12px 26px rgba(139,92,246,.3)', transition: 'transform .15s', opacity: uploading ? 0.6 : 1 }}
+        onMouseEnter={e => { if (!uploading) (e.currentTarget as HTMLElement).style.transform = 'translateY(-2px)'; }}
         onMouseLeave={e => (e.currentTarget as HTMLElement).style.transform = ''}>
         {tr.pres.cta}
       </button>

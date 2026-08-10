@@ -80,10 +80,12 @@ export function countFillerWords(transcript: string, lang: string): { word: stri
   const text = transcript.toLowerCase().trim();
   if (!text) return [];
   const fillers = lang === 'ar' ? FILLERS_AR : FILLERS_EN;
+  const useWordBoundary = lang !== 'ar';
   const results: { word: string; count: number }[] = [];
   for (const filler of fillers) {
     const escaped = filler.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(escaped, 'gi');
+    const pattern = useWordBoundary ? `\\b${escaped}\\b` : escaped;
+    const regex = new RegExp(pattern, 'gi');
     const count = (text.match(regex) ?? []).length;
     if (count > 0) results.push({ word: filler, count });
   }
@@ -158,6 +160,7 @@ export interface SessionRow {
   improvements?: unknown;
   recommendations?: unknown;
   ideal_answers?: unknown;
+  per_question_diagnosis?: unknown;
   created_at?: string;
 }
 
@@ -210,7 +213,7 @@ export async function transcribeAudio(
   blob: Blob,
   lang: string,
   preToken?: string
-): Promise<{ transcript: string; detectedLanguage: 'ar' | 'en' | 'mixed' | 'unknown' } & PauseMetrics> {
+): Promise<{ transcript: string; detectedLanguage: 'ar' | 'en' | 'other' | 'unknown' } & PauseMetrics> {
   const token = preToken ?? await getAuthToken();
   const form = new FormData();
   form.append('audio', blob, 'recording.webm');
@@ -229,7 +232,7 @@ export async function transcribeAudio(
   }
   const data = await res.json() as {
     transcript: string;
-    detectedLanguage?: 'ar' | 'en' | 'mixed' | 'unknown';
+    detectedLanguage?: 'ar' | 'en' | 'other' | 'unknown';
     pauseCount: number;
     avgPauseDuration: number;
     longestPauseDuration: number;

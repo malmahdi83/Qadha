@@ -237,6 +237,7 @@ export default function InterviewSessionPage() {
   const chunksRef = useRef<Blob[]>([]);
   const spokenIndexRef = useRef(-1);
   const mountedRef = useRef(true);
+  const recordingLockRef = useRef(false);
 
   const tts = useTTS(intLang);
 
@@ -291,6 +292,8 @@ export default function InterviewSessionPage() {
   }, []);
 
   const startRecording = useCallback(async () => {
+    if (recordingLockRef.current) return;
+    recordingLockRef.current = true;
     chunksRef.current = [];
     setTranscriptError('');
 
@@ -299,6 +302,7 @@ export default function InterviewSessionPage() {
     try {
       authToken = await getAuthToken();
     } catch (err) {
+      recordingLockRef.current = false;
       if (err instanceof AuthSessionExpiredError) { router.replace('/auth/login'); return; }
       setTranscriptError(isAr ? 'خطأ في المصادقة. يُرجى تسجيل الدخول مجددًا.' : 'Authentication error. Please sign in again.');
       return;
@@ -307,10 +311,11 @@ export default function InterviewSessionPage() {
     let audioStream: MediaStream;
     try {
       audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (!mountedRef.current) { audioStream.getTracks().forEach(t => t.stop()); return; }
+      if (!mountedRef.current) { audioStream.getTracks().forEach(t => t.stop()); recordingLockRef.current = false; return; }
       audioStreamRef.current?.getTracks().forEach(t => t.stop());
       audioStreamRef.current = audioStream;
     } catch {
+      recordingLockRef.current = false;
       setTranscriptError(isAr ? 'تعذّر الوصول إلى الميكروفون.' : 'Microphone access denied.');
       return;
     }
@@ -323,6 +328,7 @@ export default function InterviewSessionPage() {
     const capturedIndex = qIndex; // freeze index at recording start; user may advance before onstop fires
     const recordingStart = Date.now(); // capture start time here, not from a ref set later
     recorder.onstop = async () => {
+      if (!mountedRef.current) { recordingLockRef.current = false; return; }
       const durationSeconds = Math.max(0, (Date.now() - recordingStart) / 1000);
       const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
       setPhase(p => p === 'recording' || p === 'transcribing' ? 'transcribing' : p);
@@ -347,11 +353,14 @@ export default function InterviewSessionPage() {
         // We trigger a mismatch dialog on: wrong language OR mixed content.
         const textLang = detectLanguage(trimmed);
         const expectedLang: 'ar' | 'en' | 'mixed' | 'unknown' = intLang === 'ar' ? 'ar' : 'en';
-        let spokenLang: 'ar' | 'en' | 'mixed' | 'unknown';
+        let spokenLang: 'ar' | 'en' | 'mixed' | 'other' | 'unknown';
         if (textLang === 'mixed') {
           spokenLang = 'mixed'; // text analysis most reliable for mixed detection
-        } else if (groqLang !== 'unknown') {
-          spokenLang = groqLang; // Groq's audio-level detection is authoritative
+        } else if (groqLang === 'ar' || groqLang === 'en') {
+          spokenLang = groqLang; // Groq's audio-level detection is authoritative for known languages
+        } else if (groqLang === 'other') {
+          // Groq detected a language that is neither ar nor en — definitely a mismatch
+          spokenLang = expectedLang === 'ar' ? 'en' : 'ar';
         } else {
           spokenLang = textLang; // fallback to text analysis
         }
@@ -374,8 +383,10 @@ export default function InterviewSessionPage() {
         }
       } catch (err) {
         console.error('Transcription error:', err);
-        if (err instanceof AuthSessionExpiredError) { router.replace('/auth/login'); return; }
+        if (err instanceof AuthSessionExpiredError) { recordingLockRef.current = false; router.replace('/auth/login'); return; }
         setQIndex(i => { if (i === capturedIndex) { setTranscriptError(isAr ? 'انتهت جلستك. يُرجى تسجيل الدخول مجددًا.' : 'Could not transcribe audio. Please try again.'); setPhase('ready'); } return i; });
+      } finally {
+        recordingLockRef.current = false;
       }
     };
 
