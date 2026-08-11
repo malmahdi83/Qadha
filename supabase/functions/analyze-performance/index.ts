@@ -403,46 +403,80 @@ GLOBAL RULES:
 5. Return valid JSON only.
 6. Your diagnosis statuses ARE the score. Be precise: a "Good" where "Weak" is correct will produce a wrong final score.
 
-COMPLETENESS — distinguish clearly (common errors to avoid):
-  "Complete":           All expected aspects covered → Excellent or Good
-  "Partially Complete": Core idea present but key detail, example, or step missing → 40–54 range
-  "Needs Improvement":  Thin coverage, main aspects touched but shallow → 35–50
-  "Incomplete":         Major aspects absent, answer very thin or fragmented → 20–39
-  "Missing":            No relevant content at all → 0–10
-  RULE: "I would use analytics to improve customer retention." = Partially Complete, NOT Incomplete.
-  The idea is present. What is missing is the HOW (tools, steps, metrics). Score accordingly.
+COMPLETENESS — five levels, choose the most accurate one:
+  "Excellent"/"Very Good"/"Good": All expected aspects covered — definition, mechanism, example, context.
+  "Acceptable":         Core concept addressed; 1 minor expected element missing (e.g. a supporting example).
+  "Partially Complete": Core idea present but one or more KEY aspects missing (HOW, specifics, outcome, terminology).
+                        Use this when the skeleton of an answer exists but critical detail is absent.
+  "Needs Improvement":  Main topic touched at a surface level only; most expected depth is missing.
+  "Incomplete":         Only a fragment present; major aspects entirely absent; answer is very thin.
+  "Missing":            No relevant content at all → 0–10.
+
+  CALIBRATION RULES (do not collapse these levels):
+  • "HR should follow company policies" for a question about employment law → Incomplete (no legislation named).
+  • "I would use analytics to improve retention" → Partially Complete (idea present, HOW missing).
+  • "I used Salesforce to track 3 KPIs and reduced churn 12%" → Acceptable or Good (clear, specific, but context thin).
+  • Never use "Incomplete" when the candidate's core direction is correct but needs more depth — use "Partially Complete" or "Needs Improvement" instead.
 
 DIMENSION CALIBRATION:
+
   Relevance:
-    Off-topic:          0–15 (heavy overall penalty, applies score ceiling 15)
-    Partially Relevant: 35–54 (some credit)
-    Relevant:           55–100 (no penalty)
+    Off-topic:          Answer addresses a different topic entirely → ceiling 15
+    Partially Relevant: Tangentially related but misses the core question → 35–54
+    Relevant:           Addresses the actual question → 55–100 (no penalty)
 
-  Accuracy:
-    Correct:            65–100
-    Minor error:        reduce Accuracy by 10–20 points, leave other dimensions unaffected
-    Fundamentally wrong: "Incorrect" status, score ceiling 30
+  Accuracy — five levels, choose the most honest one:
+    Correct (Excellent/Very Good): All key facts, terminology, and concepts are accurate.
+    Mostly Correct (Good):         Core is right; one small imprecision or omitted nuance.
+    Partially Correct (Acceptable): Main direction correct but missing essential knowledge,
+                                    key terminology, or a required concept for the role.
+                                    Example: "HR should follow company policies" when asked about
+                                    employment legislation → Partially Correct/Acceptable.
+                                    The direction (follow rules) is right; the substance (specific laws) is absent.
+    Weak (Needs Improvement):      Vague or generic response that avoids the technical substance;
+                                    repeats the question back; uses only common-sense phrases;
+                                    demonstrates no domain knowledge.
+    Incorrect:                     A factually wrong or contradictory technical statement.
+                                    Ceiling 30. Do NOT use for answers that are merely vague or incomplete.
+    RULE: "Vague but not wrong" → Acceptable or Needs Improvement, NOT Incorrect.
+    RULE: "Missing domain knowledge" → Needs Improvement or Weak, NOT Incorrect (unless a false claim is made).
 
-  Logic & Coherence:
+  Logic & Coherence — measures internal reasoning only:
     Clear reasoning:    Good–Excellent
     Weak reasoning:     Needs Improvement (35–50)
-    Contradictory:      ceiling 25
-    Nonsensical:        ceiling 15
+    Contradictory:      Internal self-contradiction → ceiling 25
+    Nonsensical:        Incoherent or random → ceiling 15
+    RULE: A technically shallow answer can still be logically coherent. Do not penalize logic for lack of depth.
 
-  Specificity:
-    Concrete (named tools, numbers, events, steps): 70–100
-    Generic claims only: 25–45
+  Specificity — five levels based on concrete evidence in the answer:
+    Excellent/Very Good: Named tools, frameworks, technologies, metrics, numbers, timelines, business impact.
+                         Example: "I used Jira and Confluence to coordinate 4-sprint delivery, reducing blockers 30%."
+    Good:                Some concrete detail — a named tool OR a number, but not both consistently.
+    Acceptable:          Partial specificity — describes an action but without names or numbers.
+    Needs Improvement:   Generic claims only ("I am a hard worker", "I use best practices").
+    Weak:                No concrete detail at all; pure abstraction or filler phrases.
+    RULE: A single named technology or metric lifts the answer above "Weak". Do not over-penalize.
 
-  Supporting Example:
-    Strong real example:      Excellent (85–100)
-    Hypothetical example:     Acceptable (55–65)
-    Weak or partial example:  Needs Improvement (35–50)
-    No example:               Weak (20–35)
+  Supporting Example — five levels:
+    Excellent/Very Good (Strong):  Real, specific, measurable example with context and outcome.
+                                    "I implemented an onboarding process for 40 employees and reduced time-to-productivity by 2 weeks."
+    Good (Relevant):               Real example, meaningful and relevant, but missing outcome or full context.
+    Acceptable (Basic):            A recognisable real-world reference but vague — no numbers, no outcome.
+                                    "I worked on an HR project last year."
+    Needs Improvement (Weak):      A very thin or hypothetical reference with little substance.
+    Incomplete:                    Candidate started to give an example but didn't finish it.
+    Missing:                       No example or reference at all.
+    RULE: "I worked on HR" ≠ "I implemented onboarding for 40 employees." Never assign the same status to both.
+    RULE: A hypothetical ("I would...") → Needs Improvement at best, not Good.
 
-  Communication:
-    Evaluates ONLY: clarity, sentence flow, organisation, professional wording.
-    NEVER evaluates technical correctness.
-    A technically wrong answer CAN score Good or Excellent on communication.
+  Communication — evaluates ONLY delivery quality. COMPLETELY INDEPENDENT of technical correctness:
+    Evaluates: sentence clarity, flow, grammar, professional wording, organisation, readability.
+    Does NOT evaluate: technical accuracy, completeness, knowledge, domain correctness.
+    HARD RULE: A technically wrong or incomplete answer CAN score Good or Excellent on communication.
+    HARD RULE: A technically strong answer delivered in broken, disorganised sentences → Needs Improvement on communication.
+    HARD RULE: Weak specificity or low accuracy MUST NOT reduce communication score. These are separate dimensions.
+    Example: "HR should follow company policies and regulations to avoid any issues with the law."
+             → Communication: Good (clear sentence, professional wording, logical flow — even though substance is weak).
 
   STAR Structure:
     Applies ONLY to behavioural questions ("tell me about a time...", "describe a situation...").
@@ -511,7 +545,16 @@ SELF-CHECK (run internally before returning the final JSON):
   5. Is every evidence field a real quote/paraphrase from the answer, not invented?
   6. Are coach_feedback and improved_answer specific to this answer, not generic boilerplate?
   7. Set overall_score=0 and answer_quality=0 — the server recalculates these from your diagnosis statuses.
-  8. VERIFY: does per_question_diagnosis contain exactly one item per interview question? If any question is missing, add it before returning. This is the most important check.`;
+  8. VERIFY: does per_question_diagnosis contain exactly one item per interview question? If any question is missing, add it before returning. This is the most important check.
+
+  INTERNAL CONSISTENCY CHECK (run for every question before finalising):
+  A. Accuracy vs Completeness: If accuracy="Correct" or "Very Good", completeness must NOT say "Missing key concepts" — high accuracy and missing knowledge are contradictory.
+  B. Communication independence: communication_clarity must be set SOLELY on delivery quality. If you find yourself giving a low communication score because the answer was vague or technically weak, stop and re-evaluate communication on sentence clarity alone.
+  C. Specificity vs Communication: Weak specificity MUST NOT reduce communication_clarity. They measure different things.
+  D. Supporting Example vs Logic: Missing or weak examples MUST NOT reduce logic_coherence unless the reasoning itself is broken.
+  E. Accuracy calibration gate: Before assigning "Incorrect", confirm the answer contains a factually FALSE statement. Vague, generic, or policy-level answers without domain knowledge → "Needs Improvement" or "Weak", NOT "Incorrect".
+  F. Specificity calibration gate: Before assigning "Weak" specificity, confirm there are zero named entities (tools, methods, frameworks, numbers, metrics). A single named item moves the answer above "Weak".
+  G. Supporting Example calibration gate: An answer with a clear real-world reference (even brief) is NOT "Missing". A vague hypothetical is NOT "Good". Match the level to the actual quality of the example given.`;
 
       const diagExample = `{"relevance":{"status":"Off-topic","severity":"critical","reason":"The answer discusses personal hobbies instead of the accounting concept asked.","evidence":"I like football and travelling.","how_to_improve":"Start with a direct definition of what was asked."},"accuracy":{"status":"Not Applicable","severity":"none","reason":"Cannot assess — answer is entirely off-topic.","evidence":"","how_to_improve":""},"completeness":{"status":"Missing","severity":"critical","reason":"No relevant content was provided.","evidence":"","how_to_improve":"Cover the definition, comparison, and an example."},"logic_coherence":{"status":"Acceptable","severity":"low","reason":"The sentence is grammatically coherent, just unrelated.","evidence":"","how_to_improve":""},"specificity":{"status":"Not Applicable","severity":"none","reason":"No relevant content to assess.","evidence":"","how_to_improve":""},"supporting_example":{"status":"Not Applicable","severity":"none","reason":"No relevant content.","evidence":"","how_to_improve":""},"star_structure":{"status":"Not Applicable","severity":"none","reason":"Not a behavioral question.","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"The response is grammatically clear.","evidence":"","how_to_improve":""}}`;
 
