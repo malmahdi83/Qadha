@@ -10,8 +10,8 @@ export type InterviewExperienceMode = 'real' | 'assisted';
 export type DiagnosisSeverity = 'none' | 'low' | 'medium' | 'high' | 'critical';
 
 export type DiagnosisStatus =
-  | 'Excellent' | 'Good' | 'Acceptable' | 'Needs Improvement'
-  | 'Weak' | 'Off-topic' | 'Incorrect' | 'Incomplete'
+  | 'Excellent' | 'Very Good' | 'Good' | 'Acceptable' | 'Partially Complete'
+  | 'Needs Improvement' | 'Weak' | 'Off-topic' | 'Incorrect' | 'Incomplete'
   | 'Contradictory' | 'Unclear' | 'Not Applicable' | 'Missing';
 
 export interface DiagnosisDimension {

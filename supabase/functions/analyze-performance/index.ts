@@ -344,16 +344,26 @@ ${fillerLine}`;
     let systemPrompt: string;
     let userPrompt: string;
 
+    // Hoisted so the post-parse retry can access them outside the mode block
+    let interviewQuestions: Array<{ question: string; answer: string }> = [];
+    let interviewRole = '';
+    let interviewEducation = '';
+    let interviewExperience = '';
+
     if (mode === 'interview') {
       const role = sanitize(body.role, 60);
       const education = VALID_EDUCATION.includes(body.education) ? body.education : 'unspecified';
       const experience = VALID_EXPERIENCE.includes(body.experience) ? body.experience : 'unspecified';
+      interviewRole = role;
+      interviewEducation = education;
+      interviewExperience = experience;
       const questions = Array.isArray(body.questions)
         ? body.questions.slice(0, 5).map((q: unknown) => {
             const item = q as Record<string, unknown>;
             return { question: sanitize(item.question, 300), answer: sanitize(item.answer, 2000) };
           })
         : [];
+      interviewQuestions = questions;
 
       const contentOnlyMask: boolean[] = Array.isArray(body.contentOnlyMask)
         ? body.contentOnlyMask.slice(0, 5).map((v: unknown) => v === true)
@@ -386,11 +396,12 @@ DIMENSION WEIGHTS for computing answer_quality (must sum to 100%):
   → overall_score = weighted average of all per-question answer_quality scores.
 
 GLOBAL RULES:
-1. overall_score and answer_quality: set both to 0 — they are CALCULATED server-side from your diagnosis and will be overwritten. Do NOT waste tokens trying to compute them.
-2. confidence (0–100): use MEASURED SPEECH DATA only. Never invent.
-3. ai_feedback: direct coaching. Name specific weaknesses. No "great effort" for poor answers.
-4. Return valid JSON only.
-5. Your diagnosis statuses ARE the score. Be precise: a "Good" where "Weak" is correct will produce a wrong final score.
+1. per_question_diagnosis is MANDATORY. You MUST return exactly one item for every interview question — no exceptions. Never omit this array. Never return an empty array. Never return fewer items than there are questions. The server scoring engine reads ONLY this array to compute final scores: if it is absent or incomplete, all scores will be zero and no per-question feedback will appear to the candidate.
+2. overall_score and answer_quality: set both to 0 as placeholders only — these two fields are recalculated server-side from your diagnosis statuses. This applies ONLY to these two fields. All other fields, especially per_question_diagnosis, must be fully and honestly populated.
+3. confidence (0–100): use MEASURED SPEECH DATA only. Never invent.
+4. ai_feedback: direct coaching. Name specific weaknesses. No "great effort" for poor answers.
+5. Return valid JSON only.
+6. Your diagnosis statuses ARE the score. Be precise: a "Good" where "Weak" is correct will produce a wrong final score.
 
 COMPLETENESS — distinguish clearly (common errors to avoid):
   "Complete":           All expected aspects covered → Excellent or Good
@@ -499,7 +510,8 @@ SELF-CHECK (run internally before returning the final JSON):
   4. If accuracy="Incorrect" → feedback names the specific error; improved_answer corrects it.
   5. Is every evidence field a real quote/paraphrase from the answer, not invented?
   6. Are coach_feedback and improved_answer specific to this answer, not generic boilerplate?
-  7. Do NOT recalculate overall_score or answer_quality — the server handles this.`;
+  7. Set overall_score=0 and answer_quality=0 — the server recalculates these from your diagnosis statuses.
+  8. VERIFY: does per_question_diagnosis contain exactly one item per interview question? If any question is missing, add it before returning. This is the most important check.`;
 
       const diagExample = `{"relevance":{"status":"Off-topic","severity":"critical","reason":"The answer discusses personal hobbies instead of the accounting concept asked.","evidence":"I like football and travelling.","how_to_improve":"Start with a direct definition of what was asked."},"accuracy":{"status":"Not Applicable","severity":"none","reason":"Cannot assess — answer is entirely off-topic.","evidence":"","how_to_improve":""},"completeness":{"status":"Missing","severity":"critical","reason":"No relevant content was provided.","evidence":"","how_to_improve":"Cover the definition, comparison, and an example."},"logic_coherence":{"status":"Acceptable","severity":"low","reason":"The sentence is grammatically coherent, just unrelated.","evidence":"","how_to_improve":""},"specificity":{"status":"Not Applicable","severity":"none","reason":"No relevant content to assess.","evidence":"","how_to_improve":""},"supporting_example":{"status":"Not Applicable","severity":"none","reason":"No relevant content.","evidence":"","how_to_improve":""},"star_structure":{"status":"Not Applicable","severity":"none","reason":"Not a behavioral question.","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"The response is grammatically clear.","evidence":"","how_to_improve":""}}`;
 
@@ -511,10 +523,12 @@ ${hasContentOnly ? '\nملاحظة: إجابات محددة بـ [محتوى ف�
 الإجابات الفعلية:
 ${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. السؤال: ${q.question}\nالإجابة: "${q.answer || '(لم تُقدَّم إجابة)'}"${contentOnlyMask[i] ? ' [محتوى فقط]' : ''}`).join('\n\n')}
 
-أعد JSON فقط. هيكل كل سؤال في per_question_diagnosis:
+مطلوب: per_question_diagnosis يجب أن يحتوي على سؤال واحد لكل سؤال من الأسئلة أعلاه (${questions.length} إجمالاً). لا تحذف أي سؤال.
+هيكل كل سؤال في per_question_diagnosis:
 {"question":"...","answer_classification":{"primary_issue":"off_topic|incorrect|incomplete|vague|no_answer|acceptable|strong","secondary_issues":[]},"diagnosis":{...8 dimensions...},"star_sub_diagnosis":{"situation":"present|partial|missing|not_applicable","task":"...","action":"...","result":"..."},"what_interviewer_expected":"جملة واحدة.","coach_feedback":"جملتان فقط.","improved_answer":"جملتان أو ثلاث."}
 
-{"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"strengths":["نقطة قوة حقيقية"],"improvements":["تحسين 1","تحسين 2","تحسين 3"],"ai_feedback":"تغذية راجعة صادقة.","recommendations":[{"title":"توصية 1","description":"نصيحة 1"},{"title":"توصية 2","description":"نصيحة 2"},{"title":"توصية 3","description":"نصيحة 3"}],"per_question_diagnosis":[{"question":"السؤال الفعلي 1","answer_classification":{"primary_issue":"off_topic","secondary_issues":[]},"diagnosis":${diagExample},"star_sub_diagnosis":{"situation":"not_applicable","task":"not_applicable","action":"not_applicable","result":"not_applicable"},"what_interviewer_expected":"تعريف الأصول والخصوم مع مثال مقارن.","coach_feedback":"الإجابة خارج الموضوع تماماً. ابدأ دائماً بالإجابة المباشرة على السؤال.","improved_answer":"الأصول موارد تمتلكها المنشأة كالنقد والمخزون. الخصوم التزامات مستحقة عليها كالقروض."},{"question":"السؤال الفعلي 2","answer_classification":{"primary_issue":"incomplete","secondary_issues":["vague"]},"diagnosis":{"relevance":{"status":"Good","severity":"low","reason":"تتناول السؤال لكنها ناقصة.","evidence":"","how_to_improve":"أضف مثالاً محدداً ونتيجة."},"accuracy":{"status":"Acceptable","severity":"low","reason":"لا أخطاء واضحة.","evidence":"","how_to_improve":""},"completeness":{"status":"Needs Improvement","severity":"medium","reason":"تغطي الأساسيات لكن تفتقر لجوانب مهمة.","evidence":"","how_to_improve":"تناول الإجراءات والنتيجة."},"logic_coherence":{"status":"Good","severity":"none","reason":"منطقية ومتسقة.","evidence":"","how_to_improve":""},"specificity":{"status":"Weak","severity":"medium","reason":"ادعاءات مبهمة بلا أرقام.","evidence":"أنا أعمل بجد.","how_to_improve":"استبدل بموقف محدد وقابل للقياس."},"supporting_example":{"status":"Incomplete","severity":"medium","reason":"مثال جزئي بلا نتيجة.","evidence":"","how_to_improve":"أكمل بالإجراء والنتيجة."},"star_structure":{"status":"Incomplete","severity":"medium","reason":"الموقف موجود لكن الإجراء والنتيجة غائبان.","evidence":"","how_to_improve":"أضف ما فعلته ونتيجة قابلة للقياس."},"communication_clarity":{"status":"Good","severity":"none","reason":"واضحة وسهلة الفهم.","evidence":"","how_to_improve":""}},"star_sub_diagnosis":{"situation":"present","task":"missing","action":"partial","result":"missing"},"what_interviewer_expected":"موقف محدد، دور، إجراءات، ونتيجة قابلة للقياس.","coach_feedback":"الإجابة ناقصة لأنها تفتقر للإجراء والنتيجة. استخدم منهج STAR بالكامل.","improved_answer":"في دوري السابق واجه الفريق تأخراً في مشروع حرج. أنشأت اجتماعات يومية وأعدت توزيع المهام، فتم التسليم في الموعد وجدد العميل العقد."}]}`
+أعد JSON فقط. overall_score وانswer_quality = 0 (يحسبهما الخادم). جميع الحقول الأخرى يجب أن تكون مكتملة:
+{"overall_score":0,"communication":30,"confidence":25,"answer_quality":0,"strengths":["نقطة قوة حقيقية"],"improvements":["تحسين 1","تحسين 2","تحسين 3"],"ai_feedback":"تغذية راجعة صادقة.","recommendations":[{"title":"توصية 1","description":"نصيحة 1"},{"title":"توصية 2","description":"نصيحة 2"},{"title":"توصية 3","description":"نصيحة 3"}],"per_question_diagnosis":[{"question":"السؤال الفعلي 1","answer_classification":{"primary_issue":"off_topic","secondary_issues":[]},"diagnosis":${diagExample},"star_sub_diagnosis":{"situation":"not_applicable","task":"not_applicable","action":"not_applicable","result":"not_applicable"},"what_interviewer_expected":"تعريف الأصول والخصوم مع مثال مقارن.","coach_feedback":"الإجابة خارج الموضوع تماماً. ابدأ دائماً بالإجابة المباشرة على السؤال.","improved_answer":"الأصول موارد تمتلكها المنشأة كالنقد والمخزون. الخصوم التزامات مستحقة عليها كالقروض."},{"question":"السؤال الفعلي 2","answer_classification":{"primary_issue":"incomplete","secondary_issues":["vague"]},"diagnosis":{"relevance":{"status":"Good","severity":"low","reason":"تتناول السؤال لكنها ناقصة.","evidence":"","how_to_improve":"أضف مثالاً محدداً ونتيجة."},"accuracy":{"status":"Acceptable","severity":"low","reason":"لا أخطاء واضحة.","evidence":"","how_to_improve":""},"completeness":{"status":"Needs Improvement","severity":"medium","reason":"تغطي الأساسيات لكن تفتقر لجوانب مهمة.","evidence":"","how_to_improve":"تناول الإجراءات والنتيجة."},"logic_coherence":{"status":"Good","severity":"none","reason":"منطقية ومتسقة.","evidence":"","how_to_improve":""},"specificity":{"status":"Weak","severity":"medium","reason":"ادعاءات مبهمة بلا أرقام.","evidence":"أنا أعمل بجد.","how_to_improve":"استبدل بموقف محدد وقابل للقياس."},"supporting_example":{"status":"Incomplete","severity":"medium","reason":"مثال جزئي بلا نتيجة.","evidence":"","how_to_improve":"أكمل بالإجراء والنتيجة."},"star_structure":{"status":"Incomplete","severity":"medium","reason":"الموقف موجود لكن الإجراء والنتيجة غائبان.","evidence":"","how_to_improve":"أضف ما فعلته ونتيجة قابلة للقياس."},"communication_clarity":{"status":"Good","severity":"none","reason":"واضحة وسهلة الفهم.","evidence":"","how_to_improve":""}},"star_sub_diagnosis":{"situation":"present","task":"missing","action":"partial","result":"missing"},"what_interviewer_expected":"موقف محدد، دور، إجراءات، ونتيجة قابلة للقياس.","coach_feedback":"الإجابة ناقصة لأنها تفتقر للإجراء والنتيجة. استخدم منهج STAR بالكامل.","improved_answer":"في دوري السابق واجه الفريق تأخراً في مشروع حرج. أنشأت اجتماعات يومية وأعدت توزيع المهام، فتم التسليم في الموعد وجدد العميل العقد."}]}`
         : `You are evaluating a candidate for ${role} (Education: ${education}, Experience: ${experience}).
 
 ${speechMetricsBlock}
@@ -522,10 +536,12 @@ ${hasContentOnly ? '\nNOTE: Answers marked [CONTENT ONLY] were in a different la
 Candidate's actual answers:
 ${questions.map((q: {question:string;answer:string}, i: number) => `${i+1}. Q: ${q.question}\n   A: "${q.answer || '(no answer given)'}"${contentOnlyMask[i] ? ' [CONTENT ONLY]' : ''}`).join('\n\n')}
 
-Return ONLY valid JSON. Per-question structure in per_question_diagnosis:
+MANDATORY: per_question_diagnosis MUST contain exactly one item per question above (${questions.length} total). Never omit or shorten this array.
+Per-question structure in per_question_diagnosis:
 {"question":"...","answer_classification":{"primary_issue":"off_topic|incorrect|incomplete|vague|no_answer|acceptable|strong","secondary_issues":[]},"diagnosis":{...8 dimensions...},"star_sub_diagnosis":{"situation":"present|partial|missing|not_applicable","task":"...","action":"...","result":"..."},"what_interviewer_expected":"1 sentence.","coach_feedback":"2 sentences.","improved_answer":"2-3 sentences."}
 
-{"overall_score":35,"communication":30,"confidence":25,"answer_quality":20,"strengths":["Genuine strength or no-strengths message"],"improvements":["Specific improvement 1","Specific improvement 2","Specific improvement 3"],"ai_feedback":"Direct honest coaching.","recommendations":[{"title":"Rec 1","description":"Advice 1"},{"title":"Rec 2","description":"Advice 2"},{"title":"Rec 3","description":"Advice 3"}],"per_question_diagnosis":[{"question":"Actual Q1 text","answer_classification":{"primary_issue":"off_topic","secondary_issues":[]},"diagnosis":${diagExample},"star_sub_diagnosis":{"situation":"not_applicable","task":"not_applicable","action":"not_applicable","result":"not_applicable"},"what_interviewer_expected":"Define assets and liabilities with a brief comparison example.","coach_feedback":"The answer is entirely off-topic, which signals a knowledge gap to any interviewer. Always address the actual question directly first.","improved_answer":"Assets are economic resources a business owns (cash, inventory, equipment). Liabilities are obligations it owes (loans, payables). A company vehicle is an asset; the loan to buy it is a liability."},{"question":"Actual Q2 text","answer_classification":{"primary_issue":"incomplete","secondary_issues":["vague"]},"diagnosis":{"relevance":{"status":"Good","severity":"low","reason":"Addresses the question but lacks depth.","evidence":"","how_to_improve":"Add a specific example with a measurable result."},"accuracy":{"status":"Acceptable","severity":"low","reason":"No factual errors detected.","evidence":"","how_to_improve":""},"completeness":{"status":"Needs Improvement","severity":"medium","reason":"Covers basics but misses action and result.","evidence":"","how_to_improve":"Include what you did and the outcome."},"logic_coherence":{"status":"Good","severity":"none","reason":"Coherent and logical.","evidence":"","how_to_improve":""},"specificity":{"status":"Weak","severity":"medium","reason":"Vague claim with no detail.","evidence":"I always work hard.","how_to_improve":"Replace with a named situation and measurable outcome."},"supporting_example":{"status":"Incomplete","severity":"medium","reason":"Example lacks action and result.","evidence":"","how_to_improve":"Complete with STAR structure."},"star_structure":{"status":"Incomplete","severity":"medium","reason":"Situation present but action and result missing.","evidence":"","how_to_improve":"Add what you did and a quantifiable result."},"communication_clarity":{"status":"Good","severity":"none","reason":"Clear and easy to follow.","evidence":"","how_to_improve":""}},"star_sub_diagnosis":{"situation":"present","task":"missing","action":"partial","result":"missing"},"what_interviewer_expected":"A specific situation, your role, the actions you took, and a measurable result.","coach_feedback":"The answer is incomplete — no result means the interviewer cannot judge your impact. Finish the STAR loop with a concrete outcome.","improved_answer":"When my team was behind on a critical project, I identified blockers, set up daily 15-minute syncs, and reallocated tasks. We delivered on time and the client renewed the contract."}]}`;
+Return ONLY valid JSON. overall_score and answer_quality = 0 (server calculates these). All other fields must be fully populated:
+{"overall_score":0,"communication":30,"confidence":25,"answer_quality":0,"strengths":["Genuine strength or no-strengths message"],"improvements":["Specific improvement 1","Specific improvement 2","Specific improvement 3"],"ai_feedback":"Direct honest coaching.","recommendations":[{"title":"Rec 1","description":"Advice 1"},{"title":"Rec 2","description":"Advice 2"},{"title":"Rec 3","description":"Advice 3"}],"per_question_diagnosis":[{"question":"Actual Q1 text","answer_classification":{"primary_issue":"off_topic","secondary_issues":[]},"diagnosis":${diagExample},"star_sub_diagnosis":{"situation":"not_applicable","task":"not_applicable","action":"not_applicable","result":"not_applicable"},"what_interviewer_expected":"Define assets and liabilities with a brief comparison example.","coach_feedback":"The answer is entirely off-topic, which signals a knowledge gap to any interviewer. Always address the actual question directly first.","improved_answer":"Assets are economic resources a business owns (cash, inventory, equipment). Liabilities are obligations it owes (loans, payables). A company vehicle is an asset; the loan to buy it is a liability."},{"question":"Actual Q2 text","answer_classification":{"primary_issue":"incomplete","secondary_issues":["vague"]},"diagnosis":{"relevance":{"status":"Good","severity":"low","reason":"Addresses the question but lacks depth.","evidence":"","how_to_improve":"Add a specific example with a measurable result."},"accuracy":{"status":"Acceptable","severity":"low","reason":"No factual errors detected.","evidence":"","how_to_improve":""},"completeness":{"status":"Needs Improvement","severity":"medium","reason":"Covers basics but misses action and result.","evidence":"","how_to_improve":"Include what you did and the outcome."},"logic_coherence":{"status":"Good","severity":"none","reason":"Coherent and logical.","evidence":"","how_to_improve":""},"specificity":{"status":"Weak","severity":"medium","reason":"Vague claim with no detail.","evidence":"I always work hard.","how_to_improve":"Replace with a named situation and measurable outcome."},"supporting_example":{"status":"Incomplete","severity":"medium","reason":"Example lacks action and result.","evidence":"","how_to_improve":"Complete with STAR structure."},"star_structure":{"status":"Incomplete","severity":"medium","reason":"Situation present but action and result missing.","evidence":"","how_to_improve":"Add what you did and a quantifiable result."},"communication_clarity":{"status":"Good","severity":"none","reason":"Clear and easy to follow.","evidence":"","how_to_improve":""}},"star_sub_diagnosis":{"situation":"present","task":"missing","action":"partial","result":"missing"},"what_interviewer_expected":"A specific situation, your role, the actions you took, and a measurable result.","coach_feedback":"The answer is incomplete — no result means the interviewer cannot judge your impact. Finish the STAR loop with a concrete outcome.","improved_answer":"When my team was behind on a critical project, I identified blockers, set up daily 15-minute syncs, and reallocated tasks. We delivered on time and the client renewed the contract."}]}`;
 
     } else if (mode === 'presentation') {
       const topic = sanitize(body.topic, 200);
@@ -650,6 +666,78 @@ CRITICAL RULES:
     }
 
     const p = parsed as Record<string, unknown>;
+
+    // ── per_question_diagnosis validation + targeted retry ────────────────────
+    if (mode === 'interview' && interviewQuestions.length > 0) {
+      const diag = p.per_question_diagnosis;
+      const diagOk = Array.isArray(diag) && diag.length >= interviewQuestions.length;
+
+      if (!diagOk) {
+        console.warn(
+          `analyze-performance: per_question_diagnosis incomplete — got ${Array.isArray(diag) ? diag.length : 0}, expected ${interviewQuestions.length}. Retrying diagnosis only.`
+        );
+
+        const retryDiagSchema = `{"question":"exact question text","answer_classification":{"primary_issue":"off_topic|incorrect|incomplete|vague|no_answer|acceptable|strong","secondary_issues":[]},"diagnosis":{"relevance":{"status":"Good","severity":"low","reason":"1 sentence.","evidence":"","how_to_improve":""},"accuracy":{"status":"Good","severity":"none","reason":"1 sentence.","evidence":"","how_to_improve":""},"completeness":{"status":"Needs Improvement","severity":"medium","reason":"1 sentence.","evidence":"","how_to_improve":"1 sentence."},"logic_coherence":{"status":"Good","severity":"none","reason":"1 sentence.","evidence":"","how_to_improve":""},"specificity":{"status":"Weak","severity":"medium","reason":"1 sentence.","evidence":"quote","how_to_improve":"1 sentence."},"supporting_example":{"status":"Weak","severity":"medium","reason":"1 sentence.","evidence":"","how_to_improve":"1 sentence."},"star_structure":{"status":"Not Applicable","severity":"none","reason":"Not a behavioural question.","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"1 sentence.","evidence":"","how_to_improve":""}},"star_sub_diagnosis":{"situation":"not_applicable","task":"not_applicable","action":"not_applicable","result":"not_applicable"},"what_interviewer_expected":"1 sentence.","coach_feedback":"2 sentences.","improved_answer":"2-3 sentences."}`;
+
+        const retrySystemPrompt = `You are an interview evaluator. Generate a per_question_diagnosis array for the given Q&A pairs. Return ONLY a valid JSON object with a single key: per_question_diagnosis. Include exactly one item per question, in order. Never omit a question.`;
+
+        const retryLang = lang === 'ar';
+        const retryUserPrompt = retryLang
+          ? `وظيفة: ${interviewRole} (${interviewEducation}، ${interviewExperience})\n\n${interviewQuestions.map((q, i) => `${i+1}. السؤال: ${q.question}\nالإجابة: "${q.answer || '(لم تُقدَّم إجابة)'}"`).join('\n\n')}\n\nأعد JSON فقط:\n{"per_question_diagnosis":[${retryDiagSchema},...one per question]}`
+          : `Role: ${interviewRole} (${interviewEducation}, ${interviewExperience})\n\n${interviewQuestions.map((q, i) => `${i+1}. Q: ${q.question}\n   A: "${q.answer || '(no answer given)'}"`).join('\n\n')}\n\nReturn ONLY valid JSON:\n{"per_question_diagnosis":[${retryDiagSchema},...one per question]}`;
+
+        try {
+          const retryResp = await fetch(OPENROUTER_URL, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': 'https://laqtqzsvsbucbszuhkal.supabase.co',
+              'X-Title': 'Qadha AI Coach',
+            },
+            body: JSON.stringify({
+              model: MODEL,
+              messages: [
+                { role: 'system', content: retrySystemPrompt },
+                { role: 'user', content: retryUserPrompt },
+              ],
+              temperature: 0.3,
+              max_tokens: 8192,
+            }),
+            signal: AbortSignal.timeout(120000),
+          });
+
+          if (retryResp.ok) {
+            const retryData = await retryResp.json();
+            const retryChoice = retryData.choices?.[0];
+            if (retryChoice?.finish_reason !== 'length') {
+              const retryContent: string = retryChoice?.message?.content ?? '{}';
+              let retryParsed: unknown;
+              try {
+                retryParsed = JSON.parse(retryContent);
+              } catch {
+                const m = retryContent.match(/\{[\s\S]*\}/);
+                retryParsed = m ? JSON.parse(m[0]) : {};
+              }
+              const retryDiag = (retryParsed as Record<string, unknown>)?.per_question_diagnosis;
+              if (Array.isArray(retryDiag) && retryDiag.length >= interviewQuestions.length) {
+                p.per_question_diagnosis = retryDiag;
+                console.log(`analyze-performance: diagnosis retry succeeded (${retryDiag.length} items).`);
+              } else {
+                console.warn(`analyze-performance: diagnosis retry returned ${Array.isArray(retryDiag) ? retryDiag.length : 0} items — still incomplete.`);
+              }
+            } else {
+              console.warn('analyze-performance: diagnosis retry truncated (finish_reason=length).');
+            }
+          } else {
+            console.error('analyze-performance: diagnosis retry HTTP error', retryResp.status);
+          }
+        } catch (retryErr) {
+          console.error('analyze-performance: diagnosis retry failed:', retryErr);
+        }
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     if (mode === 'interview') {
       const diag = p.per_question_diagnosis;

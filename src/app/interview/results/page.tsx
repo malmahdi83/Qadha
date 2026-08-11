@@ -99,8 +99,10 @@ function Bar({ label, value, max = 100, color = 'var(--accent)', tooltip }: {
 
 const STATUS_COLOR: Record<string, string> = {
   'Excellent': '#10b981',
+  'Very Good': '#10b981',
   'Good': '#10b981',
   'Acceptable': '#0284c7',
+  'Partially Complete': '#d97706',
   'Needs Improvement': '#d97706',
   'Weak': '#ea580c',
   'Missing': '#ea580c',
@@ -178,10 +180,10 @@ const STAR_PART_COLOR: Record<string, { dot: string; label: string; labelAr: str
 
 // Severity rank — higher = worse — used to pick the most problematic instance per dimension
 const STATUS_RANK: Record<string, number> = {
-  'Excellent': 0, 'Good': 1, 'Acceptable': 2, 'Not Applicable': 2,
-  'Needs Improvement': 3, 'Incomplete': 3, 'Unclear': 3,
-  'Weak': 4, 'Missing': 5,
-  'Off-topic': 6, 'Incorrect': 6, 'Contradictory': 6,
+  'Excellent': 0, 'Very Good': 1, 'Good': 2, 'Acceptable': 3, 'Not Applicable': 3,
+  'Partially Complete': 4, 'Needs Improvement': 4, 'Incomplete': 4, 'Unclear': 4,
+  'Weak': 5, 'Missing': 6,
+  'Off-topic': 7, 'Incorrect': 7, 'Contradictory': 7,
 };
 const STAR_RANK: Record<string, number> = {
   not_applicable: 0, present: 1, partial: 2, missing: 3,
