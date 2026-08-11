@@ -5,7 +5,7 @@ export const dict = {
     tagline: 'Practice. Improve. Succeed.',
     userInitials: 'SA',
     userName: 'Sara Al-Ahmad',
-    nav: { home: 'Home', practice: 'Practice', history: 'History', profile: 'Profile' },
+    nav: { home: 'Home', practice: 'Practice', history: 'History', profile: 'Profile', feedback: 'Feedback' },
     hero: {
       badge: 'AI-powered interview & presentation coaching',
       title: 'Master Interviews and Presentations with AI',
@@ -156,7 +156,7 @@ export const dict = {
     tagline: 'تدرّب. تطوّر. انجح.',
     userInitials: 'سا',
     userName: 'سارة الأحمد',
-    nav: { home: 'الرئيسية', practice: 'التدريب', history: 'السجل', profile: 'الملف الشخصي' },
+    nav: { home: 'الرئيسية', practice: 'التدريب', history: 'السجل', profile: 'الملف الشخصي', feedback: 'ملاحظات' },
     hero: {
       badge: 'تدريب على المقابلات والعروض بالذكاء الاصطناعي',
       title: 'أتقن المقابلات والعروض التقديمية بالذكاء الاصطناعي',

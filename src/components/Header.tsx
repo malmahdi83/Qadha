@@ -13,6 +13,7 @@ const NAV = [
   { key: 'practice', href: '/modes' },
   { key: 'history', href: '/history' },
   { key: 'profile', href: '/profile' },
+  { key: 'feedback', href: '/feedback' },
 ] as const;
 
 const SCREEN_NAV: Record<string, string> = {
@@ -22,6 +23,7 @@ const SCREEN_NAV: Record<string, string> = {
   '/presentation/setup': 'practice', '/presentation/recording': 'practice',
   '/presentation/results': 'practice',
   '/history': 'history', '/profile': 'profile',
+  '/feedback': 'feedback',
 };
 
 export default function Header() {
