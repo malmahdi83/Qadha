@@ -185,10 +185,6 @@ const STATUS_RANK: Record<string, number> = {
   'Weak': 5, 'Missing': 6,
   'Off-topic': 7, 'Incorrect': 7, 'Contradictory': 7,
 };
-const STAR_RANK: Record<string, number> = {
-  not_applicable: 0, present: 1, partial: 2, missing: 3,
-};
-
 interface DimSummary {
   status: string; severity: string;
   reason: string; evidence: string; how_to_improve: string;
@@ -201,26 +197,95 @@ interface StarAgg {
   reason: string;
 }
 
+// Numeric score per status — mirrors the edge function's statusToScore map.
+// Used to compute a true weighted average across questions rather than picking worst-case.
+const STATUS_SCORE: Record<string, number> = {
+  'Excellent':          93,
+  'Very Good':          84,
+  'Good':               74,
+  'Acceptable':         62,
+  'Partially Complete': 50,
+  'Needs Improvement':  42,
+  'Unclear':            35,
+  'Weak':               30,
+  'Incomplete':         28,
+  'Incorrect':          15,
+  'Contradictory':      12,
+  'Off-topic':           8,
+  'Missing':             3,
+  // 'Not Applicable' → excluded (no entry)
+};
+
+// Map an averaged numeric score back to a human-readable status label.
+// Boundaries sit at the midpoint between adjacent canonical scores.
+function scoreToStatus(avg: number): string {
+  if (avg >= 88.5) return 'Excellent';          // midpoint 93↔84
+  if (avg >= 79.0) return 'Very Good';           // midpoint 84↔74
+  if (avg >= 68.0) return 'Good';                // midpoint 74↔62
+  if (avg >= 56.0) return 'Acceptable';          // midpoint 62↔50
+  if (avg >= 46.0) return 'Partially Complete';  // midpoint 50↔42
+  if (avg >= 38.5) return 'Needs Improvement';   // midpoint 42↔35
+  if (avg >= 32.5) return 'Unclear';             // midpoint 35↔30
+  if (avg >= 29.0) return 'Weak';                // midpoint 30↔28
+  if (avg >= 21.5) return 'Incomplete';          // midpoint 28↔15
+  if (avg >= 13.5) return 'Incorrect';           // midpoint 15↔12
+  if (avg >=  5.5) return 'Off-topic';           // midpoint 12↔8 → 10, 8↔3 → 5.5
+  return 'Missing';
+}
+
+// Derive severity from an averaged numeric score.
+function scoreToSeverity(avg: number): string {
+  if (avg >= 62) return 'none';
+  if (avg >= 50) return 'low';
+  if (avg >= 36) return 'medium';
+  if (avg >= 20) return 'high';
+  return 'critical';
+}
+
+// Aggregate per-question dimension data into a single representative summary.
+// Method: convert each question's status to a numeric score → arithmetic mean →
+// map back to a status label + severity. The "representative" question is the one
+// whose numeric score is closest to the computed mean (used for reason/evidence text).
 function buildAggDiag(items: PerQuestionDiagnosis[]): Record<string, DimSummary | null> {
   const result: Record<string, DimSummary | null> = {};
   for (const k of DIMENSION_ORDER) {
     if (k === 'star_structure') continue;
-    let worst: DimSummary | null = null;
-    let worstRank = -1;
+
+    // Collect numeric scores, skipping Not Applicable
+    const scored: { score: number; qi: number; dim: DiagnosisDimension }[] = [];
     items.forEach((item, qi) => {
       const dim = item.diagnosis?.[k as keyof AnswerDiagnosis];
-      if (!dim) return;
-      const rank = STATUS_RANK[dim.status] ?? 3;
-      if (rank > worstRank) {
-        worstRank = rank;
-        worst = { status: dim.status, severity: dim.severity ?? 'none', reason: dim.reason ?? '', evidence: dim.evidence ?? '', how_to_improve: dim.how_to_improve ?? '', questionIndex: qi };
-      }
+      if (!dim || dim.status === 'Not Applicable') return;
+      const score = STATUS_SCORE[dim.status];
+      if (score === undefined) return;
+      scored.push({ score, qi, dim });
     });
-    result[k] = worst;
+
+    if (scored.length === 0) { result[k] = null; continue; }
+
+    const avgScore = scored.reduce((s, e) => s + e.score, 0) / scored.length;
+    const aggStatus   = scoreToStatus(avgScore);
+    const aggSeverity = scoreToSeverity(avgScore);
+
+    // Pick the question closest to the average as the source for reason/evidence text
+    const rep = scored.reduce((best, cur) =>
+      Math.abs(cur.score - avgScore) < Math.abs(best.score - avgScore) ? cur : best
+    );
+
+    result[k] = {
+      status:         aggStatus,
+      severity:       aggSeverity,
+      reason:         rep.dim.reason         ?? '',
+      evidence:       rep.dim.evidence       ?? '',
+      how_to_improve: rep.dim.how_to_improve ?? '',
+      questionIndex:  rep.qi,
+    };
   }
   return result;
 }
 
+// Aggregate STAR sub-diagnosis across applicable questions.
+// Method: map present→2, partial→1, missing→0, average, then round back.
 function buildStarAgg(items: PerQuestionDiagnosis[]): StarAgg {
   const anyApplicable = items.some(item => {
     const s = item.diagnosis?.star_structure;
@@ -230,20 +295,20 @@ function buildStarAgg(items: PerQuestionDiagnosis[]): StarAgg {
     const reason = items.find(i => i.diagnosis?.star_structure?.reason)?.diagnosis?.star_structure?.reason ?? '';
     return { applicable: false, situation: 'not_applicable', task: 'not_applicable', action: 'not_applicable', result: 'not_applicable', reason };
   }
+
+  const STAR_VAL_SCORE: Record<string, number> = { present: 2, partial: 1, missing: 0 };
+  const scoreToStarVal = (avg: number) => avg >= 1.5 ? 'present' : avg >= 0.5 ? 'partial' : 'missing';
+
   const parts = ['situation', 'task', 'action', 'result'] as const;
-  const worst: Record<string, string> = {};
+  const agg: Record<string, string> = {};
   for (const p of parts) {
-    let wr = -1; let wv = 'not_applicable';
-    for (const item of items) {
-      const sub = item.star_sub_diagnosis;
-      if (!sub) continue;
-      const val = sub[p] ?? 'not_applicable';
-      const rank = STAR_RANK[val] ?? 0;
-      if (rank > wr) { wr = rank; wv = val; }
-    }
-    worst[p] = wv;
+    const applicable = items.filter(item => item.star_sub_diagnosis?.[p] !== 'not_applicable' && item.star_sub_diagnosis?.[p] !== undefined);
+    if (applicable.length === 0) { agg[p] = 'not_applicable'; continue; }
+    const avg = applicable.reduce((s, item) => s + (STAR_VAL_SCORE[item.star_sub_diagnosis![p]] ?? 0), 0) / applicable.length;
+    agg[p] = scoreToStarVal(avg);
   }
-  return { applicable: true, situation: worst.situation, task: worst.task, action: worst.action, result: worst.result, reason: '' };
+
+  return { applicable: true, situation: agg.situation, task: agg.task, action: agg.action, result: agg.result, reason: '' };
 }
 
 function StarSubDiagnosisPanel({ star, lang }: { star: StarSubDiagnosis; lang: string }) {
@@ -375,11 +440,45 @@ function AnswerDiagnosisSection({ items, lang }: { items: PerQuestionDiagnosis[]
   const starAgg = buildStarAgg(items);
   if (items.length === 0) return null;
 
-  const critCount = DIMENSION_ORDER.filter(k => {
-    if (k === 'star_structure') return false;
-    const d = aggDiag[k];
-    return d && (d.severity === 'critical' || d.severity === 'high');
-  }).length;
+  // Severity-tiered badge: examine the distribution of aggregate severities
+  // (each already represents a mean across all questions, not a worst-case value).
+  const aggSeverities = DIMENSION_ORDER
+    .filter(k => k !== 'star_structure')
+    .map(k => aggDiag[k]?.severity)
+    .filter(Boolean) as string[];
+
+  const criticalCount = aggSeverities.filter(s => s === 'critical').length;
+  const highCount     = aggSeverities.filter(s => s === 'high').length;
+  const mediumCount   = aggSeverities.filter(s => s === 'medium').length;
+
+  let badgeLabel: string;
+  let badgeColor: string;
+  let badgeBg: string;
+  let badgeBorder: string;
+
+  if (criticalCount >= 1) {
+    badgeLabel  = isAr ? 'مشكلة حرجة' : 'Critical Issue';
+    badgeColor  = '#dc2626';
+    badgeBg     = 'rgba(220,38,38,.1)';
+    badgeBorder = 'rgba(220,38,38,.25)';
+  } else if (highCount >= 2 || (highCount >= 1 && mediumCount >= 2)) {
+    badgeLabel  = isAr ? 'يحتاج تحسيناً' : 'Needs Improvement';
+    badgeColor  = '#ea580c';
+    badgeBg     = 'rgba(234,88,12,.1)';
+    badgeBorder = 'rgba(234,88,12,.25)';
+  } else if (mediumCount >= 1 || highCount >= 1) {
+    badgeLabel  = isAr ? 'تحسينات طفيفة' : 'Minor Improvements';
+    badgeColor  = '#d97706';
+    badgeBg     = 'rgba(217,119,6,.1)';
+    badgeBorder = 'rgba(217,119,6,.25)';
+  } else {
+    badgeLabel  = isAr ? 'أداء قوي عام' : 'Strong Overall';
+    badgeColor  = '#10b981';
+    badgeBg     = 'rgba(16,185,129,.1)';
+    badgeBorder = 'rgba(16,185,129,.25)';
+  }
+
+  const showBadge = criticalCount + highCount + mediumCount > 0 || aggSeverities.length > 0;
 
   const nonStarDims = DIMENSION_ORDER.filter(k => k !== 'star_structure') as string[];
   const starKey = 'star_structure';
@@ -403,9 +502,9 @@ function AnswerDiagnosisSection({ items, lang }: { items: PerQuestionDiagnosis[]
               : 'Click any dimension to see explanation, evidence, and how to improve'}
           </p>
         </div>
-        {critCount > 0 && (
-          <span style={{ fontSize: 11, fontWeight: 700, background: 'rgba(220,38,38,.1)', color: '#dc2626', border: '1px solid rgba(220,38,38,.25)', borderRadius: 20, padding: '4px 12px', whiteSpace: 'nowrap' }}>
-            {critCount} {isAr ? 'بُعد يحتاج اهتماماً' : critCount === 1 ? 'dimension needs attention' : 'dimensions need attention'}
+        {showBadge && (
+          <span style={{ fontSize: 11, fontWeight: 700, background: badgeBg, color: badgeColor, border: `1px solid ${badgeBorder}`, borderRadius: 20, padding: '4px 12px', whiteSpace: 'nowrap' }}>
+            {badgeLabel}
           </span>
         )}
       </div>
