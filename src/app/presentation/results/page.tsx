@@ -6,6 +6,7 @@ import { useApp, PresentationResults } from '@/lib/context';
 import type { QuestionMetrics } from '@/lib/context';
 import { t } from '@/lib/i18n';
 import { analyzePerformance, saveSession, getSession } from '@/lib/ai';
+import QuickFeedback from '@/components/QuickFeedback';
 
 const VIOLET = '#8b5cf6';
 const VIOLET_SOFT = 'rgba(139,92,246,.1)';
@@ -62,9 +63,12 @@ export default function PresentationResultsPage() {
   const router = useRouter();
   const calledRef = useRef(false);
   const savedRef = useRef(false);
+  const feedbackShownRef = useRef(false);
   const [loading, setLoading] = useState(!presResults);
   const [error, setError] = useState('');
   const [saveError, setSaveError] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackSessionId, setFeedbackSessionId] = useState<string | null>(null);
 
   const isAr = lang === 'ar';
 
@@ -175,7 +179,14 @@ export default function PresentationResultsPage() {
       questions: presResults.score_reasons,
       answers: presSpeechMetrics ?? undefined,
     })
-      .then(id => { if (id === null) setSaveError(true); })
+      .then(id => {
+        if (id === null) { setSaveError(true); }
+        else { setFeedbackSessionId(id); }
+        if (!feedbackShownRef.current) {
+          feedbackShownRef.current = true;
+          setTimeout(() => setShowFeedback(true), 2000);
+        }
+      })
       .catch(() => setSaveError(true));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [presResults]);
@@ -473,6 +484,16 @@ export default function PresentationResultsPage() {
             <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.7, color: 'var(--fg)', whiteSpace: 'pre-wrap' }}>{presTranscript}</p>
           </div>
         </div>
+      )}
+
+      {showFeedback && (
+        <QuickFeedback
+          module="presentation"
+          lang={lang}
+          sessionId={feedbackSessionId}
+          score={p.overall_score}
+          onClose={() => setShowFeedback(false)}
+        />
       )}
     </section>
   );

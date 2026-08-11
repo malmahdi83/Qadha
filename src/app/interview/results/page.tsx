@@ -5,6 +5,7 @@ import { ArrowRight, RotateCcw, Loader2, AlertCircle, ChevronDown, Download } fr
 import { useApp, InterviewResults, QuestionMetrics, type PerQuestionDiagnosis, type AnswerDiagnosis, type DiagnosisDimension, type StarSubDiagnosis, type AnswerClassificationIssue } from '@/lib/context';
 import { t } from '@/lib/i18n';
 import { analyzePerformance, saveSession, getSession, SpeechSummary } from '@/lib/ai';
+import QuickFeedback from '@/components/QuickFeedback';
 
 const ROLE_LABELS: Record<string, string> = {
   dev: 'Software Developer', pm: 'Project Manager', acc: 'Accountant',
@@ -732,9 +733,12 @@ export default function InterviewResultsPage() {
   const router = useRouter();
   const calledRef = useRef(false);
   const savedRef = useRef(false);
+  const feedbackShownRef = useRef(false);
   const [loading, setLoading] = useState(!interviewResults);
   const [error, setError] = useState('');
   const [saveError, setSaveError] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackSessionId, setFeedbackSessionId] = useState<string | null>(null);
 
   // Pre-compute aggregated speech metrics once
   const answeredIndices = answers.map((a, i) => a ? i : -1).filter(i => i >= 0);
@@ -852,7 +856,15 @@ export default function InterviewResultsPage() {
       ideal_answers: interviewResults.ideal_answers,
       per_question_diagnosis: interviewResults.per_question_diagnosis,
     })
-      .then(id => { if (id === null) setSaveError(true); })
+      .then(id => {
+        if (id === null) { setSaveError(true); }
+        else { setFeedbackSessionId(id); }
+        // Show popup once after report is saved, with a short delay
+        if (!feedbackShownRef.current) {
+          feedbackShownRef.current = true;
+          setTimeout(() => setShowFeedback(true), 2000);
+        }
+      })
       .catch(() => setSaveError(true));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [interviewResults]);
@@ -1145,6 +1157,16 @@ export default function InterviewResultsPage() {
             ))}
           </div>
         </div>
+      )}
+
+      {showFeedback && (
+        <QuickFeedback
+          module="interview"
+          lang={lang}
+          sessionId={feedbackSessionId}
+          score={r2.overall_score}
+          onClose={() => setShowFeedback(false)}
+        />
       )}
     </section>
   );
