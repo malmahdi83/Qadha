@@ -51,44 +51,185 @@ async function extractUserId(req: Request): Promise<string | null> {
   return user?.id ?? null;
 }
 
-// ── Programmatic consistency enforcement ────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// DETERMINISTIC SCORE AGGREGATION ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
 
-function enforceConsistency(parsed: Record<string, unknown>, mode: string): void {
-  if (mode !== 'interview') return;
+// Maps LLM diagnosis status → numeric score (0–100)
+function statusToScore(status: string): number | null {
+  const map: Record<string, number> = {
+    'Excellent':          93,
+    'Very Good':          84,
+    'Good':               74,
+    'Acceptable':         62,
+    'Partially Complete': 50,
+    'Needs Improvement':  42,
+    'Weak':               30,
+    'Very Weak':          15,
+    'Incomplete':         28,
+    'Off-topic':           8,
+    'Incorrect':          15,
+    'Contradictory':      12,
+    'Unclear':            35,
+    'Missing':             3,
+    'Not Applicable':   null,  // excluded from weighting
+  };
+  return status in map ? map[status] : null;
+}
 
+// Base dimension weights (must sum to 1.0)
+const BASE_WEIGHTS: Record<string, number> = {
+  relevance:            0.20,
+  accuracy:             0.20,
+  completeness:         0.15,
+  logic_coherence:      0.15,
+  specificity:          0.10,
+  supporting_example:   0.10,
+  communication_clarity: 0.05,
+  star_structure:       0.05,
+};
+
+interface ScoreAdjustment { label: string; value: number }
+
+interface ScoreBreakdown {
+  question_scores: number[];
+  average: number;
+  adjustments: ScoreAdjustment[];
+  final_score: number;
+}
+
+// Calculates a single question's score from its 8-dimension diagnosis.
+// Handles STAR weight redistribution and score ceilings internally.
+function calculateQuestionScore(
+  diagnosis: Record<string, Record<string, string>>
+): number {
+  const weights = { ...BASE_WEIGHTS };
+
+  // If STAR is Not Applicable, remove it — remaining weights normalise via totalWeight division
+  const starStatus = diagnosis.star_structure?.status;
+  if (!starStatus || starStatus === 'Not Applicable') {
+    delete weights.star_structure;
+  }
+
+  let weightedSum = 0;
+  let totalWeight = 0;
+
+  for (const [dim, weight] of Object.entries(weights)) {
+    const dimData = diagnosis[dim];
+    if (!dimData) continue;
+    const score = statusToScore(dimData.status);
+    if (score === null) continue; // Not Applicable — skip, letting others absorb its weight
+    weightedSum += score * weight;
+    totalWeight += weight;
+  }
+
+  let questionScore = totalWeight > 0 ? Math.round(weightedSum / totalWeight) : 0;
+
+  // ── Score ceilings (hard limits for severe failures) ──────────────────────
+  if (diagnosis.relevance?.status === 'Off-topic')             questionScore = Math.min(questionScore, 15);
+  if (diagnosis.accuracy?.status === 'Incorrect')              questionScore = Math.min(questionScore, 30);
+  if (diagnosis.logic_coherence?.status === 'Contradictory')   questionScore = Math.min(questionScore, 25);
+  if (diagnosis.completeness?.status === 'Missing')            questionScore = Math.min(questionScore, 10);
+  if (
+    (diagnosis.completeness?.status === 'Incomplete' || diagnosis.completeness?.status === 'Partially Complete')
+    && diagnosis.completeness?.severity === 'high'
+  ) questionScore = Math.min(questionScore, 45);
+  if (diagnosis.specificity?.status === 'Weak' && diagnosis.supporting_example?.status === 'Weak') {
+    questionScore = Math.min(questionScore, 55);
+  }
+
+  return Math.max(0, Math.min(100, questionScore));
+}
+
+// Aggregates all question scores into the final interview score.
+// Returns full breakdown for transparency / debugging.
+function calculateInterviewScore(
+  diagItems: Array<Record<string, unknown>>
+): ScoreBreakdown {
+  const questionScores: number[] = [];
+
+  for (const item of diagItems) {
+    const diagnosis = (item as Record<string, unknown>).diagnosis as
+      Record<string, Record<string, string>> | undefined;
+    if (!diagnosis) { questionScores.push(0); continue; }
+    questionScores.push(calculateQuestionScore(diagnosis));
+  }
+
+  const n = questionScores.length;
+  const average = n > 0
+    ? Math.round(questionScores.reduce((a, b) => a + b, 0) / n)
+    : 0;
+
+  const adjustments: ScoreAdjustment[] = [];
+
+  // ── Consistency (standard deviation) ──────────────────────────────────────
+  if (n > 1) {
+    const variance = questionScores.reduce((sum, s) => sum + Math.pow(s - average, 2), 0) / n;
+    const stddev = Math.sqrt(variance);
+    if (stddev < 10) adjustments.push({ label: 'Consistent performance across answers', value: 3 });
+    else if (stddev > 30) adjustments.push({ label: 'Large score inconsistency', value: -3 });
+  }
+
+  // ── Multiple off-topic answers ─────────────────────────────────────────────
+  const offTopicCount = diagItems.filter(item => {
+    const d = (item as Record<string, unknown>).diagnosis as Record<string, Record<string, string>> | undefined;
+    return d?.relevance?.status === 'Off-topic';
+  }).length;
+  if (offTopicCount >= 2) adjustments.push({ label: 'Multiple off-topic answers', value: -5 });
+
+  // ── Repeated technical inaccuracies ───────────────────────────────────────
+  const incorrectCount = diagItems.filter(item => {
+    const d = (item as Record<string, unknown>).diagnosis as Record<string, Record<string, string>> | undefined;
+    return d?.accuracy?.status === 'Incorrect';
+  }).length;
+  if (incorrectCount >= 2) adjustments.push({ label: 'Repeated technical inaccuracies', value: -5 });
+
+  // ── Excellent communication throughout ────────────────────────────────────
+  if (n >= 3) {
+    const allGoodComm = diagItems.every(item => {
+      const d = (item as Record<string, unknown>).diagnosis as Record<string, Record<string, string>> | undefined;
+      const s = d?.communication_clarity?.status;
+      return s === 'Excellent' || s === 'Very Good' || s === 'Good';
+    });
+    if (allGoodComm) adjustments.push({ label: 'Consistently clear communication', value: 2 });
+  }
+
+  // ── Strong supporting examples in majority of answers ─────────────────────
+  const strongExampleCount = diagItems.filter(item => {
+    const d = (item as Record<string, unknown>).diagnosis as Record<string, Record<string, string>> | undefined;
+    const s = d?.supporting_example?.status;
+    return s === 'Excellent' || s === 'Very Good';
+  }).length;
+  if (strongExampleCount >= Math.ceil(n * 0.6)) {
+    adjustments.push({ label: 'Strong supporting examples throughout', value: 2 });
+  }
+
+  // Cap total adjustment at ±10
+  const rawAdj = adjustments.reduce((sum, a) => sum + a.value, 0);
+  const clampedAdj = Math.max(-10, Math.min(10, rawAdj));
+
+  // If adjustments were clamped, annotate
+  if (rawAdj !== clampedAdj) {
+    adjustments.push({ label: 'Adjustment capped at ±10', value: clampedAdj - rawAdj });
+  }
+
+  const finalScore = Math.max(0, Math.min(100, average + clampedAdj));
+
+  return { question_scores: questionScores, average, adjustments, final_score: finalScore };
+}
+
+// ── Strengths validation (prevents hallucinated positives) ────────────────────
+
+function enforceStrengths(parsed: Record<string, unknown>, calculatedAnswerQuality: number): void {
   const diag = parsed.per_question_diagnosis;
-  if (!Array.isArray(diag) || diag.length === 0) return;
+  if (!Array.isArray(diag)) return;
 
-  // ── 1. Per-question score ceilings ──────────────────────────────────────
-  let totalCeiling = 0;
-  for (const item of diag) {
-    const rec = item as Record<string, unknown>;
-    const d = rec?.diagnosis as Record<string, Record<string, string>> | undefined;
-    if (!d) { totalCeiling += 100; continue; }
-
-    let ceiling = 100;
-    if (d.relevance?.status === 'Off-topic') ceiling = Math.min(ceiling, 15);
-    if (d.accuracy?.status === 'Incorrect') ceiling = Math.min(ceiling, 30);
-    if (d.logic_coherence?.status === 'Contradictory') ceiling = Math.min(ceiling, 25);
-    if (d.completeness?.status === 'Missing') ceiling = Math.min(ceiling, 10);
-    if ((d.completeness?.status === 'Incomplete' || d.completeness?.status === 'Partially Complete') && d.completeness?.severity === 'high') ceiling = Math.min(ceiling, 45);
-    if (d.specificity?.status === 'Weak' && d.supporting_example?.status === 'Weak') ceiling = Math.min(ceiling, 55);
-    totalCeiling += ceiling;
-  }
-  const avgCeiling = Math.round(totalCeiling / diag.length);
-  if (typeof parsed.answer_quality === 'number') {
-    parsed.answer_quality = Math.min(parsed.answer_quality, avgCeiling);
-  }
-
-  // ── 2. Strengths validation against diagnosis ────────────────────────────
   const strengths = parsed.strengths;
   if (!Array.isArray(strengths)) return;
 
-  // Collect flags from all questions
   let anyOffTopic = false;
   let anyIncorrect = false;
   let anyStarMissing = false;
-  const answerQuality = typeof parsed.answer_quality === 'number' ? parsed.answer_quality : 100;
 
   for (const item of diag) {
     const d = (item as Record<string, unknown>)?.diagnosis as Record<string, Record<string, string>> | undefined;
@@ -98,18 +239,17 @@ function enforceConsistency(parsed: Record<string, unknown>, mode: string): void
     if (d.star_structure?.status === 'Missing' || d.star_structure?.status === 'Weak') anyStarMissing = true;
   }
 
-  // Keyword patterns that contradict known issues
-  const forbiddenIfOffTopic = /answered.{0,20}question|addressed.{0,20}question|relevant|on.?topic|clear.{0,15}answer/i;
+  const forbiddenIfOffTopic  = /answered.{0,20}question|addressed.{0,20}question|relevant|on.?topic|clear.{0,15}answer/i;
   const forbiddenIfIncorrect = /technical.{0,20}knowl|accurate|correct.{0,20}knowl|strong.{0,20}know/i;
   const forbiddenIfStarMissing = /star.{0,10}struct|structured.{0,10}respon|well.?struct/i;
-  const forbiddenIfLowScore = /excellent.{0,15}comm|great.{0,15}comm|strong.{0,15}comm/i;
+  const forbiddenIfLowScore  = /excellent.{0,15}comm|great.{0,15}comm|strong.{0,15}comm/i;
 
   const validated = (strengths as unknown[]).filter((s) => {
     if (typeof s !== 'string') return false;
-    if (anyOffTopic && forbiddenIfOffTopic.test(s)) return false;
-    if (anyIncorrect && forbiddenIfIncorrect.test(s)) return false;
+    if (anyOffTopic    && forbiddenIfOffTopic.test(s))    return false;
+    if (anyIncorrect   && forbiddenIfIncorrect.test(s))   return false;
     if (anyStarMissing && forbiddenIfStarMissing.test(s)) return false;
-    if (answerQuality < 40 && forbiddenIfLowScore.test(s)) return false;
+    if (calculatedAnswerQuality < 40 && forbiddenIfLowScore.test(s)) return false;
     return true;
   });
 
@@ -246,10 +386,11 @@ DIMENSION WEIGHTS for computing answer_quality (must sum to 100%):
   → overall_score = weighted average of all per-question answer_quality scores.
 
 GLOBAL RULES:
-1. answer_quality must match the dimension weights — do NOT estimate it independently.
+1. overall_score and answer_quality: set both to 0 — they are CALCULATED server-side from your diagnosis and will be overwritten. Do NOT waste tokens trying to compute them.
 2. confidence (0–100): use MEASURED SPEECH DATA only. Never invent.
 3. ai_feedback: direct coaching. Name specific weaknesses. No "great effort" for poor answers.
 4. Return valid JSON only.
+5. Your diagnosis statuses ARE the score. Be precise: a "Good" where "Weak" is correct will produce a wrong final score.
 
 COMPLETENESS — distinguish clearly (common errors to avoid):
   "Complete":           All expected aspects covered → Excellent or Good
@@ -352,14 +493,13 @@ COACHING FIELDS (KEEP SHORT to fit token budget):
   - improved_answer: 2–3 sentences. Role/level-appropriate model answer. Address the ACTUAL question.
 
 SELF-CHECK (run internally before returning the final JSON):
-  1. Does every dimension status map to the correct score range above?
-  2. Does answer_quality match the weighted dimension scores?
-  3. If majority of dimensions are Acceptable or better → overall_score must be ≥ 50.
-  4. If only ONE dimension is Weak → overall_score must NOT drop below 35.
-  5. If 3+ critical dimensions fail → overall_score must be ≤ 30.
-  6. If relevance="Off-topic" → no content strengths; improved_answer addresses the actual question.
-  7. If accuracy="Incorrect" → feedback names the specific error; improved_answer corrects it.
-  8. Would a human interviewer assign a similar score? If not, adjust before returning.`;
+  1. Is every dimension status chosen from the valid status list above?
+  2. Does each status honestly reflect the candidate's words — not what you wished they said?
+  3. If relevance="Off-topic" → no content-based strengths; improved_answer addresses the actual question.
+  4. If accuracy="Incorrect" → feedback names the specific error; improved_answer corrects it.
+  5. Is every evidence field a real quote/paraphrase from the answer, not invented?
+  6. Are coach_feedback and improved_answer specific to this answer, not generic boilerplate?
+  7. Do NOT recalculate overall_score or answer_quality — the server handles this.`;
 
       const diagExample = `{"relevance":{"status":"Off-topic","severity":"critical","reason":"The answer discusses personal hobbies instead of the accounting concept asked.","evidence":"I like football and travelling.","how_to_improve":"Start with a direct definition of what was asked."},"accuracy":{"status":"Not Applicable","severity":"none","reason":"Cannot assess — answer is entirely off-topic.","evidence":"","how_to_improve":""},"completeness":{"status":"Missing","severity":"critical","reason":"No relevant content was provided.","evidence":"","how_to_improve":"Cover the definition, comparison, and an example."},"logic_coherence":{"status":"Acceptable","severity":"low","reason":"The sentence is grammatically coherent, just unrelated.","evidence":"","how_to_improve":""},"specificity":{"status":"Not Applicable","severity":"none","reason":"No relevant content to assess.","evidence":"","how_to_improve":""},"supporting_example":{"status":"Not Applicable","severity":"none","reason":"No relevant content.","evidence":"","how_to_improve":""},"star_structure":{"status":"Not Applicable","severity":"none","reason":"Not a behavioral question.","evidence":"","how_to_improve":""},"communication_clarity":{"status":"Good","severity":"none","reason":"The response is grammatically clear.","evidence":"","how_to_improve":""}}`;
 
@@ -509,10 +649,31 @@ CRITICAL RULES:
       );
     }
 
-    enforceConsistency(parsed as Record<string, unknown>, mode);
+    const p = parsed as Record<string, unknown>;
+
+    if (mode === 'interview') {
+      const diag = p.per_question_diagnosis;
+      if (Array.isArray(diag) && diag.length > 0) {
+        // ── Deterministic score aggregation (overrides LLM numeric scores) ──
+        const breakdown = calculateInterviewScore(diag as Array<Record<string, unknown>>);
+
+        // Inject per-question scores back into each diagnosis item
+        for (let i = 0; i < diag.length; i++) {
+          (diag[i] as Record<string, unknown>).question_score = breakdown.question_scores[i] ?? 0;
+        }
+
+        // Override LLM-provided numeric scores with calculated values
+        p.overall_score  = breakdown.final_score;
+        p.answer_quality = breakdown.average; // average question score before adjustments
+        p.score_breakdown = breakdown;        // full breakdown for debugging / transparency
+
+        // Validate strengths against diagnosis (now uses calculated answer_quality)
+        enforceStrengths(p, breakdown.average);
+      }
+    }
 
     return new Response(
-      JSON.stringify(parsed),
+      JSON.stringify(p),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
