@@ -414,15 +414,8 @@ CRITICAL RULES:
     const content = choice?.message?.content ?? '{}';
     const finishReason = choice?.finish_reason ?? '';
 
-    // DIAGNOSTIC (v35) — remove after confirming per_question_diagnosis flow
-    console.log('[DIAG] finish_reason:', finishReason);
-    console.log('[DIAG] content_length:', content.length);
-    console.log('[DIAG] content_start_80:', content.slice(0, 80).replace(/\n/g, ' '));
-    console.log('[DIAG] content_end_80:', content.slice(-80).replace(/\n/g, ' '));
-    console.log('[DIAG] contains_pqd_string:', content.includes('per_question_diagnosis'));
-
     if (finishReason === 'length') {
-      console.error('[DIAG] TRUNCATED: finish_reason=length');
+      console.error('analyze-performance: AI response truncated (finish_reason=length)');
       return new Response(
         JSON.stringify({ error: 'AI response was cut off. Please try again.' }),
         { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -439,17 +432,6 @@ CRITICAL RULES:
       } catch {
         parsed = {};
       }
-    }
-
-    const parsedRec = parsed as Record<string, unknown>;
-    console.log('[DIAG] parsed_overall_score:', parsedRec?.overall_score);
-    console.log('[DIAG] pqd_present:', parsedRec?.per_question_diagnosis !== undefined);
-    console.log('[DIAG] pqd_is_array:', Array.isArray(parsedRec?.per_question_diagnosis));
-    console.log('[DIAG] pqd_length:', Array.isArray(parsedRec?.per_question_diagnosis) ? (parsedRec.per_question_diagnosis as unknown[]).length : 'n/a');
-    if (Array.isArray(parsedRec?.per_question_diagnosis) && (parsedRec.per_question_diagnosis as unknown[]).length > 0) {
-      const first = (parsedRec.per_question_diagnosis as Record<string, unknown>[])[0];
-      console.log('[DIAG] pqd[0].keys:', Object.keys(first).join(','));
-      console.log('[DIAG] pqd[0].diagnosis_keys:', first.diagnosis ? Object.keys(first.diagnosis as object).join(',') : 'missing');
     }
 
     if (
