@@ -35,7 +35,7 @@ export interface AnswerDiagnosis {
 
 export type AnswerClassificationIssue =
   | 'off_topic' | 'incorrect' | 'incomplete' | 'vague' | 'contradictory'
-  | 'nonsensical' | 'unsupported_claim' | 'no_answer' | 'skipped' | 'acceptable' | 'strong';
+  | 'nonsensical' | 'unsupported_claim' | 'no_answer' | 'skipped' | 'acceptable' | 'strong' | 'analysis_failed';
 
 export interface StarSubDiagnosis {
   situation: 'present' | 'partial' | 'missing' | 'not_applicable';

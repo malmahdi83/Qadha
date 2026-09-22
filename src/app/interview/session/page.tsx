@@ -209,6 +209,8 @@ export default function InterviewSessionPage() {
   const router = useRouter();
   const dir = lang === 'ar' ? 'rtl' : 'ltr';
   const isAr = lang === 'ar';
+  const intDir = intLang === 'ar' ? 'rtl' : 'ltr';
+  const intTextAlign = intLang === 'ar' ? 'right' : 'left';
 
   const activeQuestions = questions.length === 5
     ? questions
@@ -556,7 +558,7 @@ export default function InterviewSessionPage() {
                     {tr.session.voiceMutedRealMode}
                   </div>
                 )}
-                <p style={{ margin: 0, fontSize: 'clamp(17px,2vw,22px)', fontWeight: 700, lineHeight: 1.5, color: 'var(--fg)' }}>
+                <p style={{ margin: 0, fontSize: 'clamp(17px,2vw,22px)', fontWeight: 700, lineHeight: 1.5, color: 'var(--fg)', textAlign: intTextAlign }} dir={intDir}>
                   {activeQuestions[qIndex]}
                 </p>
               </>
@@ -678,7 +680,7 @@ export default function InterviewSessionPage() {
                   </div>
                 </div>
                 {/* Original transcript — never translated */}
-                <div style={{ background: 'var(--surface2)', borderRadius: 10, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: 'var(--fg2)', lineHeight: 1.6 }}>
+                <div style={{ background: 'var(--surface2)', borderRadius: 10, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: 'var(--fg2)', lineHeight: 1.6, textAlign: intTextAlign }} dir={intDir}>
                   <span style={{ fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--fg3)', display: 'block', marginBottom: 5 }}>
                     {isAr ? 'إجابتك المُسجَّلة (النص الأصلي):' : 'Your recorded answer (original, not translated):'}
                   </span>
@@ -720,7 +722,7 @@ export default function InterviewSessionPage() {
             {transcriptError ? (
               <p style={{ margin: 0, fontSize: 14, color: '#ef4444' }}>{transcriptError}</p>
             ) : savedTranscript ? (
-              <p style={{ margin: 0, fontSize: 14, lineHeight: 1.65, color: 'var(--fg)' }}>{savedTranscript}</p>
+              <p style={{ margin: 0, fontSize: 14, lineHeight: 1.65, color: 'var(--fg)', textAlign: intTextAlign }} dir={intDir}>{savedTranscript}</p>
             ) : (
               <p style={{ margin: 0, fontSize: 13.5, color: 'var(--fg3)', fontStyle: 'italic' }}>
                 {phase === 'recording'

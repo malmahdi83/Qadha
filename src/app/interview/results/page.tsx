@@ -167,8 +167,9 @@ const CLASSIFICATION_COLOR: Record<AnswerClassificationIssue, { bg: string; text
   incorrect:         { bg: 'rgba(220,38,38,.12)',    text: '#b91c1c', border: 'rgba(220,38,38,.35)',   label: 'Incorrect',    labelAr: 'غير صحيحة' },
   contradictory:     { bg: 'rgba(220,38,38,.12)',    text: '#b91c1c', border: 'rgba(220,38,38,.35)',   label: 'Contradictory',labelAr: 'متناقضة' },
   nonsensical:       { bg: 'rgba(220,38,38,.12)',    text: '#b91c1c', border: 'rgba(220,38,38,.35)',   label: 'Nonsensical',  labelAr: 'غير مفهومة' },
-  no_answer:         { bg: 'rgba(220,38,38,.12)',    text: '#b91c1c', border: 'rgba(220,38,38,.35)',   label: 'No Answer',    labelAr: 'لا توجد إجابة' },
-  skipped:           { bg: 'rgba(107,114,128,.12)',  text: '#374151', border: 'rgba(107,114,128,.35)', label: 'Skipped',      labelAr: 'تم التخطي' },
+  no_answer:         { bg: 'rgba(220,38,38,.12)',    text: '#b91c1c', border: 'rgba(220,38,38,.35)',   label: 'No Answer',          labelAr: 'لا توجد إجابة' },
+  analysis_failed:   { bg: 'rgba(107,114,128,.10)',  text: '#6b7280', border: 'rgba(107,114,128,.30)', label: 'Analysis Unavailable', labelAr: 'التحليل غير متاح' },
+  skipped:           { bg: 'rgba(107,114,128,.12)',  text: '#374151', border: 'rgba(107,114,128,.35)', label: 'Skipped',            labelAr: 'تم التخطي' },
   unsupported_claim: { bg: 'rgba(217,119,6,.12)',    text: '#b45309', border: 'rgba(217,119,6,.35)',   label: 'Unsupported',  labelAr: 'غير مدعومة' },
 };
 
@@ -348,9 +349,11 @@ function StarSubDiagnosisPanel({ star, lang }: { star: StarSubDiagnosis; lang: s
   );
 }
 
-function DiagnosisPanel({ diagnosis, lang }: { diagnosis: AnswerDiagnosis; lang: string }) {
+function DiagnosisPanel({ diagnosis, lang, contentDir }: { diagnosis: AnswerDiagnosis; lang: string; contentDir?: string }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const isAr = lang === 'ar';
+  const effectiveContentDir = contentDir ?? (lang === 'ar' ? 'rtl' : 'ltr');
+  const effectiveTextAlign = effectiveContentDir === 'rtl' ? 'right' : 'left';
   const labels = isAr ? DIMENSION_LABELS_AR : DIMENSION_LABELS_EN;
 
   const hasCritical = DIMENSION_ORDER.some(k => {
@@ -407,20 +410,20 @@ function DiagnosisPanel({ diagnosis, lang }: { diagnosis: AnswerDiagnosis; lang:
               {isOpen && hasDetails && (
                 <div style={{ padding: '4px 16px 14px 32px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {dim.reason && (
-                    <p style={{ margin: 0, fontSize: 13, color: 'var(--fg2)', lineHeight: 1.55 }}>{dim.reason}</p>
+                    <p style={{ margin: 0, fontSize: 13, color: 'var(--fg2)', lineHeight: 1.55, textAlign: effectiveTextAlign }} dir={effectiveContentDir}>{dim.reason}</p>
                   )}
                   {dim.evidence && (
                     <div style={{ background: 'var(--surface2)', borderRadius: 8, padding: '8px 12px', borderLeft: `3px solid ${statusColor}` }}>
                       <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--fg3)', textTransform: 'uppercase', letterSpacing: '.06em', display: 'block', marginBottom: 4 }}>
                         {isAr ? 'من الإجابة' : 'From answer'}
                       </span>
-                      <span style={{ fontSize: 13, color: 'var(--fg)', fontStyle: 'italic' }}>"{dim.evidence}"</span>
+                      <span style={{ fontSize: 13, color: 'var(--fg)', fontStyle: 'italic', display: 'block', textAlign: effectiveTextAlign }} dir={effectiveContentDir}>"{dim.evidence}"</span>
                     </div>
                   )}
                   {dim.how_to_improve && (
                     <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                       <span style={{ fontSize: 14, color: '#10b981', flexShrink: 0 }}>→</span>
-                      <p style={{ margin: 0, fontSize: 13, color: 'var(--fg2)', lineHeight: 1.55 }}>{dim.how_to_improve}</p>
+                      <p style={{ margin: 0, fontSize: 13, color: 'var(--fg2)', lineHeight: 1.55, textAlign: effectiveTextAlign }} dir={effectiveContentDir}>{dim.how_to_improve}</p>
                     </div>
                   )}
                 </div>
@@ -433,9 +436,11 @@ function DiagnosisPanel({ diagnosis, lang }: { diagnosis: AnswerDiagnosis; lang:
   );
 }
 
-function AnswerDiagnosisSection({ items, lang }: { items: PerQuestionDiagnosis[]; lang: string }) {
+function AnswerDiagnosisSection({ items, lang, contentDir }: { items: PerQuestionDiagnosis[]; lang: string; contentDir?: string }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const isAr = lang === 'ar';
+  const effectiveContentDir = contentDir ?? (lang === 'ar' ? 'rtl' : 'ltr');
+  const effectiveTextAlign = effectiveContentDir === 'rtl' ? 'right' : 'left';
   const labels = isAr ? DIMENSION_LABELS_AR : DIMENSION_LABELS_EN;
   const aggDiag = buildAggDiag(items);
   const starAgg = buildStarAgg(items);
@@ -541,20 +546,20 @@ function AnswerDiagnosisSection({ items, lang }: { items: PerQuestionDiagnosis[]
             {isOpen && hasDetails && summary && (
               <div style={{ padding: '2px 20px 16px 36px', display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {summary.reason && (
-                  <p style={{ margin: 0, fontSize: 13.5, color: 'var(--fg2)', lineHeight: 1.6 }}>{summary.reason}</p>
+                  <p style={{ margin: 0, fontSize: 13.5, color: 'var(--fg2)', lineHeight: 1.6, textAlign: effectiveTextAlign }} dir={effectiveContentDir}>{summary.reason}</p>
                 )}
                 {summary.evidence && (
                   <div style={{ background: 'var(--surface2)', borderRadius: 9, padding: '9px 13px', borderLeft: `3px solid ${statusColor}` }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--fg3)', textTransform: 'uppercase' as const, letterSpacing: '.06em', display: 'block', marginBottom: 4 }}>
                       {isAr ? 'من إجابتك' : 'Evidence'}
                     </span>
-                    <span style={{ fontSize: 13, color: 'var(--fg)', fontStyle: 'italic' }}>"{summary.evidence}"</span>
+                    <span style={{ fontSize: 13, color: 'var(--fg)', fontStyle: 'italic', display: 'block', textAlign: effectiveTextAlign }} dir={effectiveContentDir}>"{summary.evidence}"</span>
                   </div>
                 )}
                 {summary.how_to_improve && (
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                     <span style={{ color: '#10b981', flexShrink: 0, fontWeight: 800, fontSize: 14 }}>→</span>
-                    <p style={{ margin: 0, fontSize: 13.5, color: 'var(--fg2)', lineHeight: 1.6 }}>{summary.how_to_improve}</p>
+                    <p style={{ margin: 0, fontSize: 13.5, color: 'var(--fg2)', lineHeight: 1.6, textAlign: effectiveTextAlign }} dir={effectiveContentDir}>{summary.how_to_improve}</p>
                   </div>
                 )}
                 <span style={{ fontSize: 11, color: 'var(--fg3)', fontStyle: 'italic' }}>
@@ -619,8 +624,10 @@ function AnswerDiagnosisSection({ items, lang }: { items: PerQuestionDiagnosis[]
 }
 
 function AccordionCard({
-  index, question, userAnswer, idealAnswer, lang, contentOnly, diagnosisItem,
-}: { index: number; question: string; userAnswer: string; idealAnswer: string; lang: string; contentOnly?: boolean; diagnosisItem?: PerQuestionDiagnosis }) {
+  index, question, userAnswer, idealAnswer, lang, contentOnly, diagnosisItem, contentDir,
+}: { index: number; question: string; userAnswer: string; idealAnswer: string; lang: string; contentOnly?: boolean; diagnosisItem?: PerQuestionDiagnosis; contentDir?: string }) {
+  const effectiveContentDir = contentDir ?? (lang === 'ar' ? 'rtl' : 'ltr');
+  const effectiveTextAlign = effectiveContentDir === 'rtl' ? 'right' : 'left';
   const [open, setOpen] = useState(false);
   const isAr = lang === 'ar';
 
@@ -638,7 +645,7 @@ function AccordionCard({
         className="accordion-toggle"
         style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 14, padding: '18px 22px', background: 'none', border: 'none', cursor: 'pointer', textAlign: isAr ? 'right' : 'left', fontFamily: 'inherit' }}>
         <div style={{ width: 32, height: 32, borderRadius: 9, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 14, flexShrink: 0 }}>{index + 1}</div>
-        <span style={{ flex: 1, fontWeight: 600, fontSize: 15, color: 'var(--fg)', lineHeight: 1.4 }}>{question}</span>
+        <span style={{ flex: 1, fontWeight: 600, fontSize: 15, color: 'var(--fg)', lineHeight: 1.4, textAlign: effectiveTextAlign }} dir={effectiveContentDir}>{question}</span>
         {showBadge && (
           <span style={{ fontSize: 11, fontWeight: 700, background: classStyle.bg, color: classStyle.text, border: `1px solid ${classStyle.border}`, padding: '2px 9px', borderRadius: 12, flexShrink: 0, whiteSpace: 'nowrap' }}>
             {isAr ? classStyle.labelAr : classStyle.label}
@@ -667,14 +674,14 @@ function AccordionCard({
             <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' }} />
             {isAr ? 'إجابتك' : 'Your Answer'}
           </div>
-          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.65, color: 'var(--fg)', whiteSpace: 'pre-wrap' }}>
+          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.65, color: 'var(--fg)', whiteSpace: 'pre-wrap', textAlign: effectiveTextAlign }} dir={effectiveContentDir}>
             {userAnswer || (isAr ? '(لم تُقدَّم إجابة)' : '(no answer given)')}
           </p>
         </div>
 
         {/* Answer Diagnosis */}
         {diagnosisItem?.diagnosis && (
-          <DiagnosisPanel diagnosis={diagnosisItem.diagnosis} lang={lang} />
+          <DiagnosisPanel diagnosis={diagnosisItem.diagnosis} lang={lang} contentDir={effectiveContentDir} />
         )}
 
         {/* STAR Sub-diagnosis */}
@@ -694,7 +701,7 @@ function AccordionCard({
                 <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--fg3)', marginBottom: 4 }}>
                   {isAr ? 'ما الذي كان المحاور يتوقعه؟' : 'What the interviewer expected'}
                 </div>
-                <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: 'var(--fg2)' }}>{diagnosisItem.what_interviewer_expected}</p>
+                <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: 'var(--fg2)', textAlign: effectiveTextAlign }} dir={effectiveContentDir}>{diagnosisItem.what_interviewer_expected}</p>
               </div>
             )}
             {diagnosisItem.coach_feedback && (
@@ -702,7 +709,7 @@ function AccordionCard({
                 <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--fg3)', marginBottom: 4 }}>
                   {isAr ? 'نصيحة التحسين' : 'Coaching tip'}
                 </div>
-                <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: 'var(--fg)' }}>{diagnosisItem.coach_feedback}</p>
+                <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: 'var(--fg)', textAlign: effectiveTextAlign }} dir={effectiveContentDir}>{diagnosisItem.coach_feedback}</p>
               </div>
             )}
           </div>
@@ -715,7 +722,7 @@ function AccordionCard({
               <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#10b981' }} />
               {isAr ? 'مثال على إجابة قوية' : 'Strong Answer Example'}
             </div>
-            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.65, color: 'var(--fg)', whiteSpace: 'pre-wrap' }}>
+            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.65, color: 'var(--fg)', whiteSpace: 'pre-wrap', textAlign: effectiveTextAlign }} dir={effectiveContentDir}>
               {diagnosisItem?.improved_answer || idealAnswer}
             </p>
           </div>
@@ -735,6 +742,9 @@ export default function InterviewResultsPage() {
   const savedRef = useRef(false);
   const feedbackShownRef = useRef(false);
   const [loading, setLoading] = useState(!interviewResults);
+  // sessionLang: the interview language of the content being displayed.
+  // For live sessions this equals intLang. For history loads it is set from row.lang.
+  const [sessionLang, setSessionLang] = useState<string>(intLang);
   const [error, setError] = useState('');
   const [saveError, setSaveError] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
@@ -766,6 +776,7 @@ export default function InterviewResultsPage() {
         per_question_diagnosis: Array.isArray(row.per_question_diagnosis) ? row.per_question_diagnosis as PerQuestionDiagnosis[] : undefined,
       };
       setInterviewResults(reconstructed);
+      if (row.lang) setSessionLang(row.lang);
 
       // Restore question strings and answers so the accordion section renders
       if (Array.isArray(row.questions)) {
@@ -905,6 +916,8 @@ export default function InterviewResultsPage() {
 
   const r2 = interviewResults;
   const isAr = lang === 'ar';
+  const contentDir = sessionLang === 'ar' ? 'rtl' : 'ltr';
+  const contentTextAlign = sessionLang === 'ar' ? 'right' : 'left';
 
   const confidenceTooltip = isAr
     ? 'تقدير مبني على: وتيرة الكلام، كثافة كلمات الحشو، تكرار التوقفات، واكتمال الإجابات. ليس قياسًا نفسيًا أو صوتيًا مباشرًا.'
@@ -1048,7 +1061,7 @@ export default function InterviewResultsPage() {
       </div>
 
       {r2.per_question_diagnosis && r2.per_question_diagnosis.length > 0 && (
-        <AnswerDiagnosisSection items={r2.per_question_diagnosis} lang={lang} />
+        <AnswerDiagnosisSection items={r2.per_question_diagnosis} lang={lang} contentDir={contentDir} />
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 20, marginBottom: 20 }}>
@@ -1067,7 +1080,7 @@ export default function InterviewResultsPage() {
                   {r2.strengths.map((s, i) => (
                     <li key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                       <span style={{ fontSize: 15, color: '#10b981', flexShrink: 0 }}>✓</span>
-                      <span style={{ fontSize: 14, color: 'var(--fg2)' }}>{s}</span>
+                      <span style={{ fontSize: 14, color: 'var(--fg2)', textAlign: contentTextAlign }} dir={contentDir}>{s}</span>
                     </li>
                   ))}
                 </ul>
@@ -1083,7 +1096,7 @@ export default function InterviewResultsPage() {
               {r2.improvements.map((s, i) => (
                 <li key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                   <span style={{ fontSize: 15, color: '#f59e0b', flexShrink: 0 }}>→</span>
-                  <span style={{ fontSize: 14, color: 'var(--fg2)' }}>{s}</span>
+                  <span style={{ fontSize: 14, color: 'var(--fg2)', textAlign: contentTextAlign }} dir={contentDir}>{s}</span>
                 </li>
               ))}
             </ul>
@@ -1097,7 +1110,7 @@ export default function InterviewResultsPage() {
             <div style={{ width: 40, height: 40, borderRadius: 12, background: 'var(--accent)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 19 }}>✦</div>
             <div>
               <h2 style={{ margin: '0 0 10px', fontSize: 17, fontWeight: 700, color: 'var(--accent)' }}>{isAr ? 'تغذية راجعة من الذكاء الاصطناعي' : 'AI Feedback'}</h2>
-              <p style={{ margin: 0, fontSize: 15, lineHeight: 1.65, color: 'var(--fg)' }}>{r2.ai_feedback}</p>
+              <p style={{ margin: 0, fontSize: 15, lineHeight: 1.65, color: 'var(--fg)', textAlign: contentTextAlign }} dir={contentDir}>{r2.ai_feedback}</p>
             </div>
           </div>
         </div>
@@ -1110,8 +1123,8 @@ export default function InterviewResultsPage() {
             {r2.recommendations.map((rec, i) => (
               <div key={i} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 18, padding: '20px 22px', boxShadow: 'var(--shadow)' }}>
                 <div style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 15, marginBottom: 12 }}>{i + 1}</div>
-                <h3 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 700 }}>{rec.title}</h3>
-                <p style={{ margin: 0, color: 'var(--fg2)', fontSize: 13.5, lineHeight: 1.55 }}>{rec.description}</p>
+                <h3 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 700, textAlign: contentTextAlign }} dir={contentDir}>{rec.title}</h3>
+                <p style={{ margin: 0, color: 'var(--fg2)', fontSize: 13.5, lineHeight: 1.55, textAlign: contentTextAlign }} dir={contentDir}>{rec.description}</p>
               </div>
             ))}
           </div>
@@ -1148,6 +1161,7 @@ export default function InterviewResultsPage() {
                   ?? ''
                 }
                 lang={lang}
+                contentDir={contentDir}
                 contentOnly={contentOnlyAnswers[i]}
                 diagnosisItem={
                   r2.per_question_diagnosis?.find(d => d.question === q)
