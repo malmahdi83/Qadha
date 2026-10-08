@@ -22,13 +22,24 @@ function UpdatePasswordContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // [TEMP DIAG] Auth event observer — logs event name only, never session data
+  // [TEMP DIAG] Auth event observer — seq, event name, session presence, AMR method names only
   useEffect(() => {
     const supabase = createClient();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+    let seq = 0;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      seq += 1;
+      let amrMethods: string[] | null = null;
+      if (session) {
+        try {
+          const payload = JSON.parse(atob(session.access_token.split('.')[1]));
+          amrMethods = (payload.amr ?? []).map((a: { method: string }) => a.method);
+        } catch { /* ignore decode errors */ }
+      }
       console.log('[RECOVERY_DIAG_EVENT]', JSON.stringify({
         event,
-        pathname: typeof window !== 'undefined' ? window.location.pathname : null,
+        seq,
+        hasSession: !!session,
+        amrMethods,
       }));
     });
     return () => subscription.unsubscribe();
