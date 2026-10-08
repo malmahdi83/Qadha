@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, Suspense } from 'react';
+import { useEffect, useRef, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
@@ -13,6 +13,7 @@ function UpdatePasswordContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const exchangeAttempted = useRef(false);
   const [exchangeState, setExchangeState] = useState<ExchangeState>('loading');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -22,6 +23,9 @@ function UpdatePasswordContent() {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (exchangeAttempted.current) return;
+    exchangeAttempted.current = true;
+
     const code = searchParams.get('code');
     if (!code) {
       setExchangeState('invalid');
