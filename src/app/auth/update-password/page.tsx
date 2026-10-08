@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
@@ -8,7 +8,7 @@ import { useApp } from '@/lib/context';
 
 type ExchangeState = 'loading' | 'ready' | 'invalid' | 'done';
 
-export default function UpdatePasswordPage() {
+function UpdatePasswordContent() {
   const { lang } = useApp();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -185,5 +185,17 @@ export default function UpdatePasswordPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function UpdatePasswordPage() {
+  return (
+    <Suspense fallback={
+      <div style={{ minHeight: 'calc(100vh - 65px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 16px' }}>
+        <div style={{ color: 'var(--fg2)', fontSize: 15 }}>Loading…</div>
+      </div>
+    }>
+      <UpdatePasswordContent />
+    </Suspense>
   );
 }
