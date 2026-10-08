@@ -31,23 +31,11 @@ export async function middleware(request: NextRequest) {
   }
 
   // Role check: fetch profile and verify admin
-  const { data: profile, error: profileError } = await supabase // DIAGNOSTIC
+  const { data: profile } = await supabase
     .from('profiles')
     .select('role')
     .eq('id', user.id)
     .single();
-
-  // DIAGNOSTIC: log safe values only — no JWT, tokens, cookies, or keys
-  console.log('[ADMIN_DIAG]', JSON.stringify({
-    pathname: request.nextUrl.pathname,
-    hasUser: !!user,
-    userEmail: user.email ?? null,
-    supabaseHost: new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!).hostname,
-    profileExists: profile !== null,
-    profileRole: profile?.role ?? null,
-    profileErrorCode: profileError?.code ?? null,
-    profileErrorMessage: profileError?.message ?? null,
-  }));
 
   if (!profile || profile.role !== 'admin') {
     return NextResponse.redirect(new URL('/', request.url));
