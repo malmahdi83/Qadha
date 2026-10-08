@@ -22,20 +22,56 @@ function UpdatePasswordContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // [TEMP DIAG] Auth event observer — logs event name only, never session data
+  useEffect(() => {
+    const supabase = createClient();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      console.log('[RECOVERY_DIAG_EVENT]', JSON.stringify({
+        event,
+        pathname: typeof window !== 'undefined' ? window.location.pathname : null,
+      }));
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
   useEffect(() => {
     if (exchangeAttempted.current) return;
     exchangeAttempted.current = true;
 
     const code = searchParams.get('code');
+    const supabase = createClient();
+
+    // [TEMP DIAG] Derive verifier key from env — check NAME presence only, never value
+    const projectRef = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '')
+      .replace('https://', '').split('.')[0];
+    const verifierKeyName = `sb-${projectRef}-auth-token-code-verifier`;
+    const hasPkceVerifier = typeof document !== 'undefined'
+      ? document.cookie.split(';').some(c => c.trim().startsWith(verifierKeyName))
+      : false;
+
+    console.log('[RECOVERY_DIAG]', JSON.stringify({
+      hasCode: !!code,
+      hasPkceVerifier,
+      exchangeAttempted: true,
+      pathname: typeof window !== 'undefined' ? window.location.pathname : null,
+    }));
+
     if (!code) {
       setExchangeState('invalid');
       return;
     }
-    const supabase = createClient();
-    supabase.auth.exchangeCodeForSession(code).then(({ error: err }) => {
+    supabase.auth.exchangeCodeForSession(code).then(async ({ error: err }) => {
       if (err) {
+        const { data: { session } } = await supabase.auth.getSession();
+        console.log('[RECOVERY_DIAG]', JSON.stringify({
+          exchangeSucceeded: false,
+          exchangeErrorName: err.name ?? null,
+          exchangeErrorCode: (err as { code?: string }).code ?? null,
+          hasSessionAfterFailure: !!session,
+        }));
         setExchangeState('invalid');
       } else {
+        console.log('[RECOVERY_DIAG]', JSON.stringify({ exchangeSucceeded: true }));
         router.replace('/auth/update-password');
         setExchangeState('ready');
       }
