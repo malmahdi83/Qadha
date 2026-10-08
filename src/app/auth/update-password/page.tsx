@@ -1,7 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
 import { createClient } from '@/lib/supabase';
 import { useApp } from '@/lib/context';
@@ -10,10 +9,8 @@ type ExchangeState = 'loading' | 'ready' | 'invalid' | 'done';
 
 function UpdatePasswordContent() {
   const { lang } = useApp();
-  const router = useRouter();
-  const searchParams = useSearchParams();
 
-  const exchangeAttempted = useRef(false);
+  const recoveryReceived = useRef(false);
   const [exchangeState, setExchangeState] = useState<ExchangeState>('loading');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -22,72 +19,20 @@ function UpdatePasswordContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // [TEMP DIAG] Auth event observer — seq, event name, session presence, AMR method names only
   useEffect(() => {
     const supabase = createClient();
-    let seq = 0;
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      seq += 1;
-      let amrMethods: string[] | null = null;
-      if (session) {
-        try {
-          const payload = JSON.parse(atob(session.access_token.split('.')[1]));
-          amrMethods = (payload.amr ?? []).map((a: { method: string }) => a.method);
-        } catch { /* ignore decode errors */ }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        recoveryReceived.current = true;
+        setExchangeState('ready');
+      } else if (event === 'INITIAL_SESSION') {
+        if (!recoveryReceived.current) {
+          setExchangeState('invalid');
+        }
       }
-      console.log('[RECOVERY_DIAG_EVENT]', JSON.stringify({
-        event,
-        seq,
-        hasSession: !!session,
-        amrMethods,
-      }));
     });
     return () => subscription.unsubscribe();
   }, []);
-
-  useEffect(() => {
-    if (exchangeAttempted.current) return;
-    exchangeAttempted.current = true;
-
-    const code = searchParams.get('code');
-    const supabase = createClient();
-
-    // [TEMP DIAG] Derive verifier key from env — check NAME presence only, never value
-    const projectRef = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '')
-      .replace('https://', '').split('.')[0];
-    const verifierKeyName = `sb-${projectRef}-auth-token-code-verifier`;
-    const hasPkceVerifier = typeof document !== 'undefined'
-      ? document.cookie.split(';').some(c => c.trim().startsWith(verifierKeyName))
-      : false;
-
-    console.log('[RECOVERY_DIAG]', JSON.stringify({
-      hasCode: !!code,
-      hasPkceVerifier,
-      exchangeAttempted: true,
-      pathname: typeof window !== 'undefined' ? window.location.pathname : null,
-    }));
-
-    if (!code) {
-      setExchangeState('invalid');
-      return;
-    }
-    supabase.auth.exchangeCodeForSession(code).then(async ({ error: err }) => {
-      if (err) {
-        const { data: { session } } = await supabase.auth.getSession();
-        console.log('[RECOVERY_DIAG]', JSON.stringify({
-          exchangeSucceeded: false,
-          exchangeErrorName: err.name ?? null,
-          exchangeErrorCode: (err as { code?: string }).code ?? null,
-          hasSessionAfterFailure: !!session,
-        }));
-        setExchangeState('invalid');
-      } else {
-        console.log('[RECOVERY_DIAG]', JSON.stringify({ exchangeSucceeded: true }));
-        router.replace('/auth/update-password');
-        setExchangeState('ready');
-      }
-    });
-  }, [router, searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
