@@ -1,14 +1,24 @@
 'use client';
-import { useState } from 'react';
+import { useState, Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
 import { createClient } from '@/lib/supabase';
 import { useApp } from '@/lib/context';
 
-export default function RegisterPage() {
+// Mirror the login page's allowlist — register only threads through known-safe destinations.
+const ALLOWED_NEXT = ['/interview/setup', '/presentation/setup'];
+function safeNext(raw: string | null): string {
+  if (!raw) return '/';
+  if (!raw.startsWith('/') || raw.startsWith('//') || raw.includes('://')) return '/';
+  return ALLOWED_NEXT.includes(raw) ? raw : '/';
+}
+
+function RegisterContent() {
   const { lang } = useApp();
-  const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = safeNext(searchParams.get('next'));
+
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -26,9 +36,22 @@ export default function RegisterPage() {
     setLoading(true);
     setError('');
     const supabase = createClient();
+
+    // Build the emailRedirectTo URL so that after email confirmation the user
+    // lands on the login page with the intended destination preserved.
+    // createBrowserClient's PKCE auto-exchange runs on that page load, then
+    // the login page's getUser() check forwards the now-authenticated user to `next`.
+    const emailRedirectTo = typeof window !== 'undefined'
+      ? `${window.location.origin}/auth/login${next !== '/' ? `?next=${encodeURIComponent(next)}` : ''}`
+      : undefined;
+
     const { error: err } = await supabase.auth.signUp({
-      email, password,
-      options: { data: { full_name: fullName } },
+      email,
+      password,
+      options: {
+        data: { full_name: fullName },
+        ...(emailRedirectTo ? { emailRedirectTo } : {}),
+      },
     });
     if (err) {
       setError(err.message);
@@ -37,6 +60,10 @@ export default function RegisterPage() {
     }
     setLoading(false);
   };
+
+  const loginHref = next !== '/'
+    ? `/auth/login?next=${encodeURIComponent(next)}`
+    : '/auth/login';
 
   if (success) {
     return (
@@ -49,7 +76,7 @@ export default function RegisterPage() {
           <p style={{ color: 'var(--fg2)', fontSize: 15 }}>
             {lang === 'ar' ? `أرسلنا رابط تأكيد إلى ${email}` : `We sent a confirmation link to ${email}`}
           </p>
-          <Link href="/auth/login" style={{ display: 'inline-block', marginTop: 20, color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>
+          <Link href={loginHref} style={{ display: 'inline-block', marginTop: 20, color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>
             {lang === 'ar' ? 'العودة لتسجيل الدخول' : 'Back to sign in'}
           </Link>
         </div>
@@ -110,11 +137,23 @@ export default function RegisterPage() {
 
         <p style={{ textAlign: 'center', marginTop: 20, fontSize: 14, color: 'var(--fg2)' }}>
           {lang === 'ar' ? 'لديك حساب بالفعل؟ ' : 'Already have an account? '}
-          <Link href="/auth/login" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>
+          <Link href={loginHref} style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>
             {lang === 'ar' ? 'تسجيل الدخول' : 'Sign in'}
           </Link>
         </p>
       </div>
     </div>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={
+      <div style={{ minHeight: 'calc(100vh - 65px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 16px' }}>
+        <div style={{ color: 'var(--fg2)', fontSize: 15 }}>Loading…</div>
+      </div>
+    }>
+      <RegisterContent />
+    </Suspense>
   );
 }

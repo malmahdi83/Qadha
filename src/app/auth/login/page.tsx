@@ -1,21 +1,50 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
 import { createClient } from '@/lib/supabase';
 import { useApp } from '@/lib/context';
 import { t } from '@/lib/i18n';
 
-export default function LoginPage() {
+// Allowlist: only these relative paths are valid post-auth destinations.
+const ALLOWED_NEXT = ['/interview/setup', '/presentation/setup'];
+function safeNext(raw: string | null): string {
+  if (!raw) return '/';
+  if (!raw.startsWith('/') || raw.startsWith('//') || raw.includes('://')) return '/';
+  return ALLOWED_NEXT.includes(raw) ? raw : '/';
+}
+
+function LoginContent() {
   const { lang } = useApp();
   const tr = t(lang);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = safeNext(searchParams.get('next'));
+
+  const [checking, setChecking] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // On mount: if there is already a valid session (including one just established
+  // by PKCE auto-exchange after email confirmation), redirect immediately.
+  // getUser() awaits initializePromise, so the PKCE exchange completes first.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!cancelled && user) {
+        router.replace(next);
+      } else if (!cancelled) {
+        setChecking(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [next, router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,11 +54,21 @@ export default function LoginPage() {
     const { error: err } = await supabase.auth.signInWithPassword({ email, password });
     if (err) {
       setError(lang === 'ar' ? 'بيانات اعتماد غير صالحة' : 'Invalid credentials');
+      setLoading(false);
     } else {
-      router.push('/');
+      router.push(next);
     }
-    setLoading(false);
   };
+
+  if (checking) {
+    return (
+      <div style={{ minHeight: 'calc(100vh - 65px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 16px' }}>
+        <div style={{ color: 'var(--fg2)', fontSize: 15 }}>
+          {lang === 'ar' ? 'جارٍ التحقق…' : 'Checking…'}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: 'calc(100vh - 65px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 16px' }}>
@@ -56,7 +95,7 @@ export default function LoginPage() {
               {lang === 'ar' ? 'البريد الإلكتروني' : 'Email'}
             </label>
             <input type="email" value={email} onChange={e => setEmail(e.target.value)} required
-              placeholder={lang === 'ar' ? 'your@email.com' : 'your@email.com'}
+              placeholder="your@email.com"
               style={{ width: '100%', border: '1.5px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontFamily: 'inherit', fontSize: 15, padding: '12px 14px', borderRadius: 11, outline: 'none', boxSizing: 'border-box' }}
               onFocus={e => (e.target as HTMLInputElement).style.borderColor = 'var(--accent)'}
               onBlur={e => (e.target as HTMLInputElement).style.borderColor = ''} />
@@ -90,11 +129,26 @@ export default function LoginPage() {
 
         <p style={{ textAlign: 'center', marginTop: 20, fontSize: 14, color: 'var(--fg2)' }}>
           {lang === 'ar' ? 'ليس لديك حساب؟ ' : "Don't have an account? "}
-          <Link href="/auth/register" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>
+          <Link
+            href={next !== '/' ? `/auth/register?next=${encodeURIComponent(next)}` : '/auth/register'}
+            style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}
+          >
             {lang === 'ar' ? 'إنشاء حساب' : 'Sign up'}
           </Link>
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div style={{ minHeight: 'calc(100vh - 65px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 16px' }}>
+        <div style={{ color: 'var(--fg2)', fontSize: 15 }}>Loading…</div>
+      </div>
+    }>
+      <LoginContent />
+    </Suspense>
   );
 }
