@@ -56,7 +56,7 @@ function LoginContent() {
       setError(lang === 'ar' ? 'بيانات اعتماد غير صالحة' : 'Invalid credentials');
       setLoading(false);
     } else {
-      router.push(next);
+      window.location.replace(next);
     }
   };
 
