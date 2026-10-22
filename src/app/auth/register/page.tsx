@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase';
 import { useApp } from '@/lib/context';
 
 // Mirror the login page's allowlist — register only threads through known-safe destinations.
-const ALLOWED_NEXT = ['/interview/setup', '/presentation/setup'];
+const ALLOWED_NEXT = ['/interview/setup', '/presentation/setup', '/profile'];
 function safeNext(raw: string | null): string {
   if (!raw) return '/';
   if (!raw.startsWith('/') || raw.startsWith('//') || raw.includes('://')) return '/';

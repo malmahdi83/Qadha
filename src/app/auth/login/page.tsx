@@ -8,7 +8,7 @@ import { useApp } from '@/lib/context';
 import { t } from '@/lib/i18n';
 
 // Allowlist: only these relative paths are valid post-auth destinations.
-const ALLOWED_NEXT = ['/interview/setup', '/presentation/setup'];
+const ALLOWED_NEXT = ['/interview/setup', '/presentation/setup', '/profile'];
 function safeNext(raw: string | null): string {
   if (!raw) return '/';
   if (!raw.startsWith('/') || raw.startsWith('//') || raw.includes('://')) return '/';
