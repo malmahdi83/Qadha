@@ -2,7 +2,7 @@ import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
 // Only /interview/setup and /presentation/setup require auth — exact paths only.
-const SETUP_PATHS = ['/interview/setup', '/presentation/setup', '/profile'];
+const SETUP_PATHS = ['/interview/setup', '/presentation/setup', '/profile', '/history'];
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -59,5 +59,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/admin/:path*', '/interview/setup', '/presentation/setup', '/profile'],
+  matcher: ['/admin/:path*', '/interview/setup', '/presentation/setup', '/profile', '/history'],
 };
