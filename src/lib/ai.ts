@@ -1,4 +1,5 @@
 import { createClient } from './supabase';
+import { normalizeArabicForTTS } from './tts-normalize';
 
 const BASE = process.env.NEXT_PUBLIC_SUPABASE_URL + '/functions/v1';
 
@@ -196,6 +197,7 @@ export async function getSessions(): Promise<SessionRow[]> {
 }
 
 export async function fetchTTSAudio(text: string, lang: string): Promise<Blob> {
+  const spokenText = lang === 'ar' ? normalizeArabicForTTS(text) : text;
   const token = await getAuthToken();
   const res = await fetch(`${BASE}/tts`, {
     method: 'POST',
@@ -203,7 +205,7 @@ export async function fetchTTSAudio(text: string, lang: string): Promise<Blob> {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`,
     },
-    body: JSON.stringify({ text, lang }),
+    body: JSON.stringify({ text: spokenText, lang }),
   });
   if (!res.ok) {
     throw new Error(`TTS failed: ${await res.text()}`);
