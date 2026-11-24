@@ -258,8 +258,8 @@ describe('boundary numbers', () => {
     expect(normalizeArabicForTTS('1,000,000 KWD')).toBe('مليون دينار كويتي');
   });
 
-  it('intToArabicWords via 2,000,000 دينار كويتي — construct state مليوني', () => {
-    expect(normalizeArabicForTTS('2,000,000 دينار كويتي')).toBe('مليوني دينار كويتي');
+  it('intToArabicWords via 2,000,000 دينار كويتي — construct state مِلْيُونَي (diacritics for Yasser)', () => {
+    expect(normalizeArabicForTTS('2,000,000 دينار كويتي')).toBe('مِلْيُونَي دينار كويتي');
   });
 
   it('200 دينار كويتي — construct state مئتي (ن drops before currency noun)', () => {
@@ -338,8 +338,8 @@ describe('KWD grammar forms', () => {
 // 14. Fils grammar (singular / dual / plural 3-10 / accusative 11+)
 // ---------------------------------------------------------------------------
 describe('fils grammar forms', () => {
-  it('0.001 KWD → one fils (zero dinar suppressed)', () => {
-    expect(normalizeArabicForTTS('0.001 KWD')).toBe('فلس واحد');
+  it('0.001 KWD → one fils with diacritics (zero dinar suppressed, Yasser fix)', () => {
+    expect(normalizeArabicForTTS('0.001 KWD')).toBe('فِلْس واحد');
   });
 
   it('0.002 KWD → dual fils (zero dinar suppressed)', () => {
@@ -444,7 +444,7 @@ describe('grammar form regression', () => {
   // Zero-dinar suppression: 0.XXX KWD outputs only fils
   it('zero dinar suppression: 0.XXX KWD outputs only fils', () => {
     const cases: [string, string][] = [
-      ['0.001 KWD', 'فلس واحد'],
+      ['0.001 KWD', 'فِلْس واحد'],
       ['0.002 KWD', 'فلسين'],
       ['0.010 KWD', 'عشرة فلوس'],
       ['0.100 KWD', 'مئة فلساً'],

@@ -134,7 +134,8 @@ const FRACTION_MAP: Readonly<Record<string, string>> = {
 function applyConstructState(w: string): string {
   if (w === 'مئتين')   return 'مئتي';
   if (w === 'ألفين')   return 'ألفي';
-  if (w === 'مليونين') return 'مليوني';
+  // Diacritics on مِلْيُونَي guide Yasser away from "مالِيوني" mispronunciation.
+  if (w === 'مليونين') return 'مِلْيُونَي';
   return w;
 }
 
@@ -154,7 +155,8 @@ function formatDinarAmount(n: number, currencyLabel: string): string {
 // Returns the correct Arabic spoken form for a fils count n (1–999).
 // Caller omits the phrase when n === 0.
 function formatFils(n: number): string {
-  if (n === 1) return 'فلس واحد';
+  // Diacritics on فِلْس guide Yasser away from "فلز" mispronunciation of the final س.
+  if (n === 1) return 'فِلْس واحد';
   if (n === 2) return 'فلسين';
   if (n >= 3 && n <= 10) return `${intToArabicWords(n)} فلوس`;
   return `${intToArabicWords(n)} فلساً`;
